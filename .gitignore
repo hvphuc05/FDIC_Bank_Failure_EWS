@@ -24,3 +24,5 @@ data_processed/
 # OS files
 .DS_Store
 Thumbs.db
+
+data_storage_benchmark/
