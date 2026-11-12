@@ -1,8 +1,8 @@
 # FINAL INDIVIDUAL RESEARCH REPORT
 ## A Big-Data Pipeline for Bank Failure Early Warning
 
-* **Student Full Name**: [Student Name]
-* **Student ID (MSSV)**: [Student ID]
+* **Student Full Name**: Hứa Văn Phúc
+* **Student ID (MSSV)**: 11231006
 * **Class / Cohort**: BFT65B – Big Data Analytics in Finance
 * **GitHub Repository URL**: https://github.com/hvphuc05/FDIC_Bank_Failure_EWS
 * **Data Ingestion Date**: 2026-11-08 / 2026-11-09

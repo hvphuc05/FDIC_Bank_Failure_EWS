@@ -13,6 +13,11 @@ data_raw/
 data_processed/
 *.parquet
 *.csv
+!report/*.csv
+
+# Temporary inspection scripts
+check_schema.py
+check_failures.py
 
 # Jupyter
 .ipynb_checkpoints/
@@ -24,5 +29,6 @@ data_processed/
 # OS files
 .DS_Store
 Thumbs.db
+
 
 data_storage_benchmark/
