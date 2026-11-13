@@ -1,0 +1,9 @@
+column,role,n_complete_bank_years,share_Q1<=Q2<=Q3<=Q4,median_abs_Q4_over_abs_Q1,evidence_finding
+NETINC,flow candidate,407328,0.7664,4.08,YTD cumulative-like (de-cumulation required in step 04)
+INTINC,flow candidate,407328,0.9952,4.11,YTD cumulative-like (de-cumulation required in step 04)
+EINTEXP,flow candidate,407068,0.9951,4.05,YTD cumulative-like (de-cumulation required in step 04)
+NONII,flow candidate,407328,0.966,4.26,YTD cumulative-like (de-cumulation required in step 04)
+NONIX,flow candidate,407328,0.9945,4.16,YTD cumulative-like (de-cumulation required in step 04)
+ELNATR,flow candidate,397938,0.9124,4.33,YTD cumulative-like (de-cumulation required in step 04)
+NTLNLS,flow candidate,389153,0.5947,5.14,Mixed flow / volatile quarterly increments
+ASSET,control (stock),408605,0.3312,1.04,Quarterly or stock-like (control pattern)

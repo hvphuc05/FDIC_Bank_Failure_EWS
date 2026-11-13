@@ -1,0 +1,26 @@
+rule,description,class,n_tested,n_flagged,pct_of_tested,n_banks,first_quarter,last_quarter
+R01,ASSET <= 0 (zero or negative total assets),error-like,1682616,0,0.0,0,,
+R02,DEP < 0 (balance item assumed non-negative),error-like,1682615,0,0.0,0,,
+R03,DEPDOM < 0 (balance item assumed non-negative),error-like,1682615,0,0.0,0,,
+R04,SC < 0 (balance item assumed non-negative),error-like,1682615,96,0.0057,40,1984Q3,2010Q2
+R05,CHBAL < 0 (balance item assumed non-negative),error-like,1682615,2,0.0001,1,2005Q1,2005Q2
+R06,BRO < 0 (balance item assumed non-negative),error-like,1665855,0,0.0,0,,
+R07,LNLSGR < 0 (balance item assumed non-negative),error-like,1682615,32,0.0019,11,1984Q1,1993Q2
+R08,LNRE < 0 (balance item assumed non-negative),error-like,1682615,6,0.0004,1,1992Q3,1993Q4
+R09,LNCI < 0 (balance item assumed non-negative),error-like,1682615,2,0.0001,1,1991Q1,1991Q2
+R10,LNCON < 0 (balance item assumed non-negative),error-like,1678676,0,0.0,0,,
+R11,LNATRES < 0 (balance item assumed non-negative),error-like,1678467,9,0.0005,7,1984Q4,2024Q3
+R12,NCLNLS < 0 (balance item assumed non-negative),error-like,1680117,3,0.0002,3,1990Q2,1993Q2
+R13,P3ASSET < 0 (balance item assumed non-negative),error-like,710691,0,0.0,0,,
+R14,P9ASSET < 0 (balance item assumed non-negative),error-like,1604885,0,0.0,0,,
+R15,NAASSET < 0 (balance item assumed non-negative),error-like,1604886,2,0.0001,2,1990Q2,1993Q2
+R16,ORE < 0 (balance item assumed non-negative),error-like,1678467,646,0.0385,225,1984Q1,2011Q4
+R17,"DEPDOM > DEP + 1 (domestic deposits exceed total deposits by > $1,000)",error-like,1682615,0,0.0,0,,
+R18,"LNLSNET > ASSET + 1 (net loans exceed total assets by > $1,000)",error-like,1682615,2,0.0001,2,1989Q4,1990Q2
+R19,"REPDTE is not a standard quarter-end (0331, 0630, 0930, 1231)",error-like,1682616,0,0.0,0,,
+R20,|ROA| > 50% (implausible quarterly return on assets),extreme value,1682616,1056,0.0628,250,1984Q1,2026Q2
+R21,DEP > ASSET (deposits exceed assets; characteristic of balance-sheet insolvency),informational,1682615,6204,0.3687,1561,1984Q1,2025Q2
+R22,EQ <= 0 (book equity non-positive; critical insolvency indicator),informational,1678468,15683,0.9344,2845,1984Q1,2026Q2
+R23,Sign of NETINC differs from sign of ROA (divergent net income and ROA),informational,1677924,886,0.0528,885,1984Q3,2003Q4
+R24,|LNLSNET - (LNLSGR - LNATRES)| > 1% of LNLSGR (allowance identity discrepancy),informational,1678467,6,0.0004,6,1984Q1,1992Q1
+R25,|LNLSNET - (LNLSGR - LNATRES)| > 5% of LNLSGR (allowance identity discrepancy),informational,1678467,2,0.0001,2,1984Q3,1991Q1

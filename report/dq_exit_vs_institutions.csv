@@ -1,0 +1,65 @@
+exit_group,attribute,value,count
+active_reporting_at_panel_end,Total banks in group,ALL,4307
+active_reporting_at_panel_end,Not found in institutions,MISSING,56
+active_reporting_at_panel_end,ACTIVE,1.0,4199
+active_reporting_at_panel_end,ACTIVE,<null>,56
+active_reporting_at_panel_end,ACTIVE,0.0,52
+active_reporting_at_panel_end,CHANGEC1,<null>,3514
+active_reporting_at_panel_end,CHANGEC1,810.0,301
+active_reporting_at_panel_end,CHANGEC1,520.0,203
+active_reporting_at_panel_end,CHANGEC1,510.0,109
+active_reporting_at_panel_end,CHANGEC1,820.0,51
+active_reporting_at_panel_end,CHANGEC1,470.0,44
+active_reporting_at_panel_end,CHANGEC1,223.0,33
+active_reporting_at_panel_end,CHANGEC1,440.0,18
+active_reporting_at_panel_end,CHANGEC1,110.0,12
+active_reporting_at_panel_end,CHANGEC1,811.0,9
+active_reporting_at_panel_end,ENDEFYMD,12/31/9999,4208
+active_reporting_at_panel_end,ENDEFYMD,<null>,56
+active_reporting_at_panel_end,ENDEFYMD,10/01/2026,8
+active_reporting_at_panel_end,ENDEFYMD,08/01/2026,6
+active_reporting_at_panel_end,ENDEFYMD,07/01/2026,5
+exited_confirmed_failure,Total banks in group,ALL,3210
+exited_confirmed_failure,Not found in institutions,MISSING,0
+exited_confirmed_failure,ACTIVE,0.0,3210
+exited_confirmed_failure,CHANGEC1,211.0,2391
+exited_confirmed_failure,CHANGEC1,213.0,314
+exited_confirmed_failure,CHANGEC1,217.0,187
+exited_confirmed_failure,CHANGEC1,230.0,181
+exited_confirmed_failure,CHANGEC1,223.0,102
+exited_confirmed_failure,CHANGEC1,235.0,25
+exited_confirmed_failure,CHANGEC1,215.0,3
+exited_confirmed_failure,CHANGEC1,240.0,3
+exited_confirmed_failure,CHANGEC1,221.0,3
+exited_confirmed_failure,CHANGEC1,224.0,1
+exited_confirmed_failure,ENDEFYMD,12/31/1988,53
+exited_confirmed_failure,ENDEFYMD,09/30/1988,48
+exited_confirmed_failure,ENDEFYMD,07/29/1988,42
+exited_confirmed_failure,ENDEFYMD,08/31/1988,41
+exited_confirmed_failure,ENDEFYMD,07/20/1989,32
+exited_unlisted_other_exit,Total banks in group,ALL,16541
+exited_unlisted_other_exit,Not found in institutions,MISSING,179
+exited_unlisted_other_exit,ACTIVE,0.0,16360
+exited_unlisted_other_exit,ACTIVE,<null>,179
+exited_unlisted_other_exit,ACTIVE,1.0,2
+exited_unlisted_other_exit,CHANGEC1,223.0,14081
+exited_unlisted_other_exit,CHANGEC1,221.0,805
+exited_unlisted_other_exit,CHANGEC1,240.0,501
+exited_unlisted_other_exit,CHANGEC1,217.0,460
+exited_unlisted_other_exit,CHANGEC1,<null>,194
+exited_unlisted_other_exit,CHANGEC1,224.0,183
+exited_unlisted_other_exit,CHANGEC1,222.0,173
+exited_unlisted_other_exit,CHANGEC1,235.0,84
+exited_unlisted_other_exit,CHANGEC1,213.0,23
+exited_unlisted_other_exit,CHANGEC1,216.0,23
+exited_unlisted_other_exit,ENDEFYMD,<null>,179
+exited_unlisted_other_exit,ENDEFYMD,01/01/1995,83
+exited_unlisted_other_exit,ENDEFYMD,01/01/1988,70
+exited_unlisted_other_exit,ENDEFYMD,01/01/1990,60
+exited_unlisted_other_exit,ENDEFYMD,12/31/1987,59
+reporting_at_end_listed_failed,Total banks in group,ALL,6
+reporting_at_end_listed_failed,Not found in institutions,MISSING,0
+reporting_at_end_listed_failed,ACTIVE,1.0,6
+reporting_at_end_listed_failed,CHANGEC1,<null>,5
+reporting_at_end_listed_failed,CHANGEC1,820.0,1
+reporting_at_end_listed_failed,ENDEFYMD,12/31/9999,6

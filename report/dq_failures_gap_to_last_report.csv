@@ -1,0 +1,6 @@
+last_report_vs_failure_date,n_failures
+Post-exit reporting (after failure date),439
+0-92 days (immediate preceding quarter),2472
+93-184 days (lag 2 quarters),330
+185-366 days (lag 3-4 quarters),10
+more than 366 days (severe reporting hiatus),0

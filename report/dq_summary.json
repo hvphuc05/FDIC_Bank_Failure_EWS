@@ -1,0 +1,52 @@
+{
+ "provenance": {
+  "n_quarters": 170,
+  "first_quarter": "19840331",
+  "last_quarter": "20260630",
+  "manifest_last_run_utc": "2026-11-08T11:40:41+00:00",
+  "latest_repdte_at_download": "20260630"
+ },
+ "panel": {
+  "n_rows": 1682616,
+  "n_banks": 24064,
+  "n_quarters": 170,
+  "first_quarter": "1984Q1",
+  "last_quarter": "2026Q2",
+  "duplicate_cert_repdte": 0,
+  "null_cert": 0,
+  "banks_with_internal_reporting_gaps": 32,
+  "missing_bank_quarters_in_gaps": 92,
+  "banks_reporting_single_quarter_only": 204,
+  "banks_no_longer_observed_before_last_quarter": 19751,
+  "rows_per_quarter_min": 4313,
+  "rows_per_quarter_max": 18133
+ },
+ "failures": {
+  "failures_total_registry_rows": 4117,
+  "failures_unparsed_faildate": 0,
+  "failures_null_cert_all_history": 488,
+  "scope_temporal_bounds": "1984-01-01 to 2026-06-30",
+  "failures_in_scope": 3273,
+  "in_scope_cert_null": 0,
+  "in_scope_cert_not_in_panel": 22,
+  "in_scope_cert_in_panel": 3251,
+  "in_scope_rows_with_repeated_cert": 77,
+  "in_scope_cost_available_rows": 3231,
+  "in_scope_cost_missing_rows": 42,
+  "in_scope_cost_sum_thousand_usd": 286544957.63525736,
+  "in_scope_cost_median_thousand_usd": 12264.57331,
+  "linked_failures_reporting_post_exit": 439,
+  "linked_failures_median_gap_days": 48.0
+ },
+ "institutions": {
+  "institutions_registry_rows": 27835,
+  "institutions_duplicate_certs": 0,
+  "institutions_null_certs": 0,
+  "panel_banks_unmatched_in_institutions": 235,
+  "exit_classification_design_note": "ACTIVE and CHANGEC1 represent terminal regulatory snapshots; they are strictly restricted to exit classification and excluded from feature sets."
+ },
+ "state": {
+  "stname_null_rows": 0,
+  "banks_with_state_charter_transitions": 249
+ }
+}
