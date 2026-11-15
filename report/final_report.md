@@ -24,7 +24,7 @@
 
 # 1. Executive Summary & Context
 
-*(To be finalized in Part 6: answers to Q1, Q2, Q3 from the perspective of the State Bank of Vietnam. Status of this draft: Parts 1, 2, 4 and the design of Part 5 are complete; Part 3 and the test evaluation are pending.)*
+*(To be finalized in Part 6: answers to Q1, Q2, Q3 from the perspective of the State Bank of Vietnam. Status of this draft: Parts 1, 2, 4, the design of Part 5 and the T1 part of Part 3 are complete; T2, the Spark MLlib demonstration, the test evaluation and Part 6 are pending.)*
 
 ---
 
@@ -302,7 +302,130 @@ The four splits add to 1,681,547 rows. Because four overlapping 4-quarter window
 
 # 4. Part 3: Scalable Processing with Polars & PySpark
 
-*(In progress.)* Planned content: (i) the three core transformations — year-to-date de-cumulation (T1), forward-label construction by an interval join (T2) and feature ratios with a calendar lag (T3) — implemented in Polars lazy mode, with the optimised plan (`report/polars_plan_decumulate.txt` already contains the plan of T1) explained; (ii) a pandas baseline with identical semantics, results verified equal, timed in isolated processes at scales ×1, ×2, ×4 (`src/05_polars_pandas_benchmark.py`); (iii) a PySpark reproduction with a result check and a read of the physical plan (`src/06_spark_pipeline.py`); (iv) an argument, from the measured time and peak memory, about when a cluster becomes justified.
+## 4.1 Scope and method
+
+The core transformations of the pipeline are implemented in Polars lazy mode: de-cumulation of year-to-date flows (T1, `src/04_build_panel.py`, stage 2), forward-label construction with censoring (T2, stage 3) and feature ratios with a calendar lag (T3, `src/07_features.py`). This chapter benchmarks **T1**, the first and most data-intensive transformation: a self-join of the panel on `(CERT, year, quarter)` that subtracts the previous quarter's year-to-date value (§3.2.3). T2 and T3 are not benchmarked.
+
+| Environment | Hardware | Software |
+|:---|:---|:---|
+| Laptop | Intel Core i5-10210U @ 1.60 GHz, 8 GB RAM, Windows 11 | Python 3.12.3, pandas 3.1.1, Polars 2.1.0 |
+| Google Colab | 2 vCPUs | PySpark 4.0.5, Polars 1.35.2, OpenJDK 21.0.12.1 (build 21.0.12.1+1-1-24.04.4-Ubuntu), Python 3.13.18, pandas 2.2.3 |
+
+The two environments use **different Polars versions** (2.1.0 and 1.35.2). The Polars 2.0 change that made the streaming engine the default (§4.2) implies that the default engine of 1.35.2 may be a different one; we did not test this, so Colab and laptop Polars results are not directly comparable.
+
+**Benchmark design.** The input is a narrow table (`CERT`, `REPDTE`, seven YTD flows; 9 columns). Scale ×k is k copies of the panel with `CERT` shifted by 10 million, so keys stay unique (×1 = 1,682,616 rows, ×2 = 3,365,232, ×4 = 6,730,464). Each measurement runs in a **fresh subprocess**. Time covers reading the Parquet file and computing the result. Memory is the peak working set of the process on Windows and the peak resident set (`ru_maxrss`) on Linux; the two are not comparable across operating systems. Results are the median of 7 runs with the minimum and maximum, unless stated. Three implementations of the same task were compared: Polars (lazy), pandas with a merge on `(CERT, year, quarter)` (same algorithm), and pandas with `groupby().diff()` (a common row-based idiom, **not** identical: it differs on 10 rows, 9 for `ELNATR` and `NTLNLS`, where the previous quarter's row is missing).
+
+**Correctness.** Before any timing, the three exact implementations were compared with the output of step 04 on all 1,682,616 rows and 7 variables: Polars against step 04, pandas against step 04, and Polars against pandas all show 0 null-pattern mismatches and a maximum absolute difference of 0.0. These checks are assertions in `--verify`.
+
+## 4.2 How Polars executes T1
+
+`LazyFrame.explain()` (`report/polars_plan_T1_*.txt`) shows what the optimiser does with the query:
+
+| Observation in the plan | Interpretation |
+|:---|:---|
+| The unoptimised plan has **two** `Parquet SCAN` nodes (one per side of the self-join); the optimised plan has **one** scan below a `CACHE` node that both sides of the join reference | The file is read, and the year and quarter columns are computed, only once and shared |
+| The condition `q == 1` used by all seven `when/then/otherwise` expressions is replaced by one shared expression (`__POLARS_CSER_…`) | Common sub-expression elimination: it is evaluated once instead of seven times |
+| Every scan shows `PROJECT */9 COLUMNS` | All nine columns are needed, so projection pushdown gives no saving; there is no filter, so no predicate pushdown either |
+| The plan printed for `engine="streaming"` is identical to the optimised plan apart from the cache identifier | The plan text does not show which engine will run it; the engines have to be compared by measurement |
+
+`LazyFrame.profile()` is not available in the installed Polars 2.1.0 (it raises an error stating that it was removed in version 2.0 and that the streaming engine is now the default). A stage-by-stage timing was used instead (median of 3, ×4 data; the stages are separate queries, so the times are not additive):
+
+**Table P3-1: Stage timing, Polars 2.1.0, ×4**
+
+| Stage | Seconds |
+|:---|---:|
+| S0 metadata only (row count) | 0.001 |
+| S1 read and decode all 9 columns | 0.282 |
+| S2 + year and quarter columns | 0.374 |
+| S3 + self-join on `(CERT, year, quarter)` | 1.630 |
+| S4 full query (+ 7 de-cumulated columns) | 1.724 |
+
+The step from S2 to S3 (1.26 s) is about **73%** of the full query (1.724 s); reading and decoding is about 16%. The join is the dominant cost.
+
+**Engine choice.** Because the default engine is the streaming engine, an explicit in-memory run was added. At ×4: default 1.67 s and 1,759 MB, in-memory 2.35 s and 3,430 MB (the interleaved sweep, in another session, gives 1.71 s versus 2.02 s and 1,756 versus 3,428 MB). The default engine uses about half the peak memory and is 15–29% faster. `polars_lazy` and `polars_streaming` are indistinguishable in every run, which agrees with the default being the streaming engine.
+
+## 4.3 Benchmark against pandas (laptop)
+
+**Table P3-2: Laptop, median of 7 runs [min – max]**
+
+| Scale | pandas (merge) | pandas (groupby-diff) | Polars (default) | Polars (in-memory) |
+|:---|:---|:---|:---|:---|
+| ×1 time (s) | 0.64 [0.61–0.83] | 0.92 [0.90–0.96] | 0.46 [0.45–0.65] | 0.55 [0.53–0.67] |
+| ×1 peak (MB) | 634 | 569 | 689 | 954 |
+| ×2 time (s) | 1.14 [1.12–1.40] | 1.77 [1.75–2.46] | 0.93 [0.90–0.97] | 1.14 [1.03–1.25] |
+| ×2 peak (MB) | 1,126 | 1,017 | 1,058 | 1,777 |
+| ×4 time (s) | 2.05 [1.95–2.08] | 3.13 [3.08–3.59] | 1.67 [1.65–1.71] | 2.35 [2.06–3.31] |
+| ×4 peak (MB) | 2,110 | 1,888 | 1,759 | 3,430 |
+
+* **Time.** Both pandas variants are slower than default Polars at every scale; the pandas merge is the stronger baseline. Polars is about 1.2–1.3 times faster than the pandas merge at ×2 and ×4. Across four measurement sessions the ratio at ×4 was 1.28, 1.34, 1.23 and 1.11, so the advantage is real but modest and varies by session. **Absolute times differ between sessions by up to about 20%** (pandas ×4: 2.53, 2.05, 1.90 s), so only comparisons within one session are used. The `groupby().diff()` idiom is 1.4–1.6 times slower than the pandas merge.
+* **Memory.** Polars is not lower at every scale: higher than the pandas merge at ×1 (+9%), lower by 17% at ×4. Between ×2 and ×4 the slope is about 208 MB per million rows for default Polars, 292 for the pandas merge, 259 for groupby-diff and 491 for the Polars in-memory engine.
+* **Scaling.** For all implementations, doubling the rows roughly doubles the time (Polars 0.46 → 0.93 → 1.67 s); nothing superlinear is visible up to 6.7 million rows.
+
+**Table P3-3: Parallelism (interleaved runs, ×4, one session, median of 7)**
+
+| Setting | Time (s) | Speed-up vs 1 thread | Peak (MB) |
+|:---|---:|---:|---:|
+| pandas (merge) | 1.90 | – | 2,107 |
+| Polars, 1 thread | 3.08 | 1.00 | 1,512 |
+| Polars, 2 threads | 2.04 | 1.51 | 1,545 |
+| Polars, 4 threads | 1.69 | 1.82 | 1,618 |
+| Polars, 8 threads | 1.70 | 1.81 | 1,751 |
+| Polars, default (8-thread pool) | 1.71 | – | 1,756 |
+
+With one thread Polars is 1.6 times *slower* than pandas in the same session (3.08 versus 1.90 s), and with two threads about equal; on this machine its advantage therefore comes from parallelism, not from faster single-thread code. Parallel efficiency falls from 75% (2 threads) to 46% (4) and 23% (8); going from 4 to 8 threads brings no gain, which agrees with a processor of 4 physical cores and 8 hardware threads (to be confirmed against the Intel specification). More threads also cost memory (+16% from 1 to 8 threads).
+
+## 4.4 Benchmark on Google Colab (same machine as Spark)
+
+**Table P3-4: Colab (2 vCPUs), median of 7 runs [min – max]; peak resident memory**
+
+| Scale | pandas (merge) time (s) | Polars 1.35.2 time (s) | pandas peak (MB) | Polars peak (MB) |
+|:---|:---|:---|---:|---:|
+| ×1 | 1.48 [1.34–1.87] | 1.10 [1.07–2.12] | 1,068 | 735 |
+| ×2 | 2.95 [2.54–4.10] | 2.24 [2.22–3.79] | 2,022 | 1,274 |
+| ×4 | 6.90 [5.37–7.27] | 6.34 [4.75–13.08] | 3,602 | 2,382 |
+
+On the shared Colab machine the runs are noisy (Polars ×4 ranges from 4.75 to 13.08 s). Polars is about 1.3 times faster at ×1 and ×2 and about 1.1 times at ×4, and its peak memory is 31–37% lower at all three scales. These figures use a different operating system, a different memory measure and a different Polars version from Table P3-2 and must not be compared with it.
+
+## 4.5 PySpark reproduction
+
+`src/06_spark_pipeline.py` implements the same T1 with the DataFrame API (calendar join on `(CERT, year, quarter)`). It ran on Colab in local mode (`local[*]`, default parallelism 2, Spark 4.0.5, Java 21.0.12.1, adaptive query execution on, broadcast threshold 10,485,760 bytes). The default-configuration result at ×1 was written to Parquet, downloaded and compared with the Polars result by `src/06b_compare_spark.py` on all 1,682,616 rows and 7 variables: **0 null-pattern mismatches, maximum absolute difference 0.0** (strict assertion; the check was done for the default configuration only).
+
+**Reading the physical plan** (`spark_plan_T1_*.txt`, `explain("formatted")`):
+
+* Each side of the join is `Scan parquet → Project (adds year and quarter; on the right side the quarter is shifted by one) → Exchange hashpartitioning(CERT, yr, q, N) → Sort`; the right side also has a `Filter` of null checks on the keys (the scan has `PushedFilters: [IsNotNull(CERT)]`). The join is a **`SortMergeJoin LeftOuter`** on three keys, followed by a `Project` with the same `CASE WHEN q = 1 …` logic as the Polars query.
+* **The input file is scanned twice** (nodes 1 and 5); Polars' optimiser reads it once (§4.2).
+* Spark **shuffles both inputs** (two `Exchange` nodes) and sorts them before merging. The default broadcast threshold of 10 MB did not lead to a broadcast join.
+* With adaptive query execution on, the printed plan is the initial one (`isFinalPlan=false`), so run-time changes such as coalescing partitions are not visible. With it off, the plan shows whole-stage code generation in five stages separated by the two shuffles.
+* The number of shuffle partitions is 200 by default (`hashpartitioning(..., 200)`), which is large for two cores.
+
+**Table P3-5: Spark configurations, Colab, median [min – max] in seconds**
+
+| Configuration | ×1 | ×4 |
+|:---|:---|:---|
+| Default (200 shuffle partitions, AQE on) | 9.52 [8.02–11.45] (5 runs) | 39.21 [32.87–44.57] (5 runs) |
+| 8 shuffle partitions, AQE on | 8.31 [6.29–14.83] (3 runs) | 23.92 [22.85–25.95] (3 runs) |
+| 8 shuffle partitions, AQE off | 7.47 [5.79–9.20] (3 runs) | not run |
+
+Two runs of the default configuration at ×1 gave 9.59 and 9.52 s. Reducing the partitions lowered the ×4 time by 39% (39.21 → 23.92 s); at ×1 the differences between configurations (−13% and −22%) are within the spread of the runs and are not interpreted. Start-up of the Spark session took 10.2–13.8 s and the first run 18.2–20.5 s at ×1 (41.1–43.1 s at ×4), against a median of 7.5–9.5 s at ×1. Other tuning (for example partitioning the input by `CERT`) was not explored.
+
+**Table P3-6: Spark against Polars and pandas on the same Colab machine (seconds)**
+
+| Scale | Spark default | Spark best measured | Polars 1.35.2 | pandas | Spark default / Polars | Spark best / Polars |
+|:---|---:|---:|---:|---:|---:|---:|
+| ×1 | 9.52 | 7.47 | 1.10 | 1.48 | 8.7 | 6.8 |
+| ×2 | 17.47 | – | 2.24 | 2.95 | 7.8 | – |
+| ×4 | 39.21 | 23.92 | 6.34 | 6.90 | 6.2 | 3.8 |
+
+The ×2 default time comes from the first run of the script (its JSON recorded the AQE flag wrongly because of an error in the script, which was corrected afterwards; the plan shows that AQE was on). "Best measured" is 8 partitions with AQE off at ×1 and 8 partitions at ×4.
+
+## 4.6 When is a cluster justified?
+
+1. **Not for this panel.** T1 on the whole 42-year panel (9-column slice) takes Polars about 0.5 s on the laptop and about 1.1 s on Colab at ×1. Spark in local mode on Colab needs about 10 s to start, 20 s for its first run and 7.5–9.5 s per repeated run at ×1, which is 6.8–8.7 times slower than Polars. The panel in Parquet is 174 MB (§2).
+2. **The gap narrows with size but did not close in the measured range.** Spark/Polars falls from 8.7 (×1) to 6.2 (×4) with default settings, and from 6.8 to 3.8 with the best configuration measured. Local mode on two cores cannot show horizontal scaling.
+3. **An illustrative break-even (an assumption, not a measurement).** If Spark scaled linearly with the number of workers of the same kind and shuffle network costs were ignored, matching one Polars node at ×4 would take about 6 workers (39.21 / 6.34) with the default configuration, or about 4 with the better one (23.92 / 6.34). Real shuffles over a network would increase these numbers.
+4. **What would justify a cluster.** (a) Data that no longer fit on one machine even with the streaming engine: the memory slope of default Polars on the laptop is about 0.21 GB per million rows of this 9-column slice, so a 16 GB machine would hold of the order of 70 million rows of the slice if the slope stayed linear (an extrapolation, not measured; the real panel has more columns). (b) Workloads that must run many jobs or serve many users concurrently, or must finish within a time limit that one machine cannot meet. (c) Data that already live in a distributed store, so moving them dominates the cost. Part 6 relates these thresholds to Vietnamese supervisory volumes.
+
+**Limits of this benchmark.** One transformation (T1) on a 9-column slice; larger scales are replicated copies of the same panel, so key distributions do not change; Spark ran in local mode on 2 vCPUs with default settings plus two variations; the Colab machine is shared and noisy; Polars versions differ between environments; three or five repeats were used for the Spark runs.
 
 ---
 

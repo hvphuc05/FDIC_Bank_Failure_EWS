@@ -1,0 +1,16 @@
+﻿{
+  "label": "x4_default",
+  "spark_version": "4.0.5",
+  "master": "local[*]",
+  "default_parallelism": 2,
+  "java_version": "21.0.12.1",
+  "aqe_enabled": "true",
+  "broadcast_threshold": "10485760b",
+  "shuffle_partitions_conf": "200",
+  "startup_sec": 11.14,
+  "first_run_sec": 43.52,
+  "sec_median": 32.71,
+  "sec_min": 30.97,
+  "sec_max": 34.87,
+  "repeats": 5
+}

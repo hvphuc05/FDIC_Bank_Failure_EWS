@@ -1,0 +1,2 @@
+scale,engine,threads,rows,sec_median,sec_min,sec_max,peak_mb,status
+4,polars_lazy,8,6730464,2.3725169000099413,2.0707412000047043,2.3945966999744996,1747.1488,ok

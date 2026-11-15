@@ -12,7 +12,7 @@ The project takes the viewpoint of a data engineer at the State Bank of Vietnam.
 |:---|:---|:---|
 | 1 | Acquisition, verification, storage layout benchmark | done |
 | 2 | Data-quality audit, clean point-in-time panel, exit classification | done |
-| 3 | Polars processing, pandas benchmark, PySpark reproduction, scaling argument | in progress (`05_polars_pandas_benchmark.py` drafted, `06_spark_pipeline.py` not started) |
+| 3 | Polars processing, pandas benchmark, PySpark reproduction, scaling argument | transformation T1 done (Polars, pandas and Spark benchmark, strict result checks, plan reading); T2 (labels) not benchmarked; write-up in the report §4 |
 | 4 | Feature pipeline (23 features, fitted preprocessing) | done |
 | 5 | Validation, models, cost-based threshold | design and development-period results done; **single test evaluation and Spark MLlib demo pending** |
 | 6 | Conclusions | pending |
@@ -41,8 +41,10 @@ FDIC_Bank_Failure_EWS/
 │   ├── 02_storage_benchmark.py     # six storage layouts compared
 │   ├── 03_quality_report.py        # automated audit and problem register
 │   ├── 04_build_panel.py           # stages 1-4: events, de-cumulation, labels/split, exits
-│   ├── 05_polars_pandas_benchmark.py   # Part 3 (in progress)
-│   ├── 06_spark_pipeline.py        # Part 3 (planned)
+│   ├── 05_polars_pandas_benchmark.py   # Part 3: T1 in Polars vs pandas, isolated subprocesses, thread sweep
+│   ├── 05b_polars_engine_explain.py    # Part 3: Polars plans and stage timing
+│   ├── 06_spark_pipeline.py        # Part 3: T1 in PySpark (laptop with Java, or Google Colab)
+│   ├── 06b_compare_spark.py        # Part 3: strict row-level comparison Spark vs Polars
 │   ├── 07_features.py              # stateless feature construction
 │   ├── preprocess.py               # fitted pipeline: winsorize -> median impute -> scale
 │   ├── modeling.py                 # dev-only loader and model definitions
@@ -52,7 +54,7 @@ FDIC_Bank_Failure_EWS/
 │   ├── 08d_policy_comparison.py    # threshold policies compared across folds
 │   ├── check_pipeline_leak.py      # proves the preprocessing statistics come from dev only
 │   └── diagnostics/                # read-only evidence scripts (see section 5)
-├── notebooks/
+├── notebooks/                      # Colab notebook of the Spark run (with outputs)
 └── report/
     ├── final_report.md             # master report
     ├── figures/
@@ -60,8 +62,9 @@ FDIC_Bank_Failure_EWS/
     ├── panel_split_summary.csv     # rows/positives per split
     ├── cv_baseline_results.csv, cv_bootstrap_ci.csv, cv_bootstrap_pairs.csv
     ├── cv_calibration.csv, cv_cost_thresholds.csv, cv_policy_comparison.csv
-    ├── benchmark_T1_decumulate.csv # Part 3 (after the run)
-    └── polars_plan_decumulate.txt  # optimised Polars plan of the de-cumulation
+    ├── benchmark_T1_decumulate*.csv, benchmark_T1_thread_sweep.csv   # Part 3 laptop measurements
+    ├── polars_plan_decumulate.txt, polars_plan_T1_*.txt, polars_stage_timing_T1.csv   # Polars plans
+    └── spark_T1_result_*.json, spark_plan_T1_*.txt   # Part 3 Spark runs (Colab)
 ```
 
 ## 4. How to reproduce
@@ -88,6 +91,29 @@ Run from the repository root, in this order. Timings are from the author's lapto
 | 5 | `python src/08d_policy_comparison.py` | policy comparison | n/r |
 
 All random operations use seed 42 (`config.RANDOM_SEED`; bootstrap: `numpy.random.default_rng(42)`).
+
+### Part 3 (scalable processing)
+
+Laptop (Windows PowerShell, from the repository root; `pip install psutil` is needed for memory measurement):
+
+```powershell
+python src/05_polars_pandas_benchmark.py --prep --scales 1 2 4     # builds data_processed/bench/ytd_input_x*.parquet
+python src/05_polars_pandas_benchmark.py --verify                  # strict equality of Polars, pandas and step 04
+python src/05_polars_pandas_benchmark.py --repeats 7               # report/benchmark_T1_decumulate.csv
+python src/05_polars_pandas_benchmark.py --sweep 1 2 4 8 --sweep-scale 4 --repeats 7   # thread sweep, interleaved runs
+python src/05b_polars_engine_explain.py 4                          # plans and stage timing
+```
+
+Spark on Google Colab (Java 21 and PySpark 4.0.5 were used): upload a zip with `config.py`, `src/` and `data_processed/bench/ytd_input_x*.parquet` (use `/` separators in the archive), unzip, `pip install pyspark polars psutil pandas pyarrow`, then:
+
+```bash
+python src/05_polars_pandas_benchmark.py --engines pandas polars_lazy --repeats 7
+python src/06_spark_pipeline.py --input data_processed/bench/ytd_input_x1.parquet --label x1_default --write-out spark_T1_out_x1
+python src/06_spark_pipeline.py --input data_processed/bench/ytd_input_x4.parquet --label x4_default
+python src/06_spark_pipeline.py --input data_processed/bench/ytd_input_x4.parquet --label x4_shuf8 --shuffle-partitions 8 --repeats 3
+```
+
+Download `spark_T1_out_x1`, put it in `data_processed/spark_T1_out_x1/` and run `python src/06b_compare_spark.py data_processed/spark_T1_out_x1 1`; it must print `SPARK MATCHES POLARS`.
 
 ## 5. Diagnostic scripts (read-only evidence for the design decisions)
 
@@ -133,7 +159,7 @@ Outcome: logistic regression with the threshold p\* = 1/(1+r) (see `report/final
 
 ## 9. Known limitations
 
-Small number of failures in 1994–2007; wide intervals in the third validation fold; untuned hyper-parameters; the false-alarm cost is an assumption; costs counted per bank-quarter; publication delay of reports not modelled; the API gives the latest version of each report (no vintage control); 22 failure records have no panel data (reason not established); `NTLNLS` keeps a residual Q4 effect after de-cumulation.
+Small number of failures in 1994–2007; wide intervals in the third validation fold; untuned hyper-parameters; the false-alarm cost is an assumption; costs counted per bank-quarter; publication delay of reports not modelled; the API gives the latest version of each report (no vintage control); 22 failure records have no panel data (reason not established); `NTLNLS` keeps a residual Q4 effect after de-cumulation; the Part 3 benchmark covers one transformation on a 9-column slice, with replicated data, a noisy shared Colab machine, Spark in local mode only, and different Polars versions on laptop (2.1.0) and Colab (1.35.2).
 
 ## 10. Data source and AI disclosure
 

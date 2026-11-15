@@ -1,0 +1,6 @@
+stage,seconds
+"S0 metadata only (row count)",0.001
+"S1 read and decode all 9 columns",0.282
+"S2 + year and quarter columns",0.374
+"S3 + self-join on (CERT, year, quarter), all columns kept",1.63
+"S4 full query (+ 7 de-cumulated columns, 9 output columns)",1.724

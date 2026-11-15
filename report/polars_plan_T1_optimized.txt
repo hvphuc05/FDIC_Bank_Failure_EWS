@@ -1,0 +1,22 @@
+simple π 9/9 ["CERT", "REPDTE", "NETINC_q", ... 6 other columns]
+  simple π 24/24 ["CERT", "REPDTE", "NETINC", ... 21 other columns]
+     WITH_COLUMNS:
+     [when(col("__POLARS_CSER_0x10000000b")).then(col("NETINC")).otherwise(col("NETINC") - col("NETINC_prev")).alias("NETINC_q"), when(col("__POLARS_CSER_0x10000000b")).then(col("INTINC")).otherwise(col("INTINC") - col("INTINC_prev")).alias("INTINC_q"), when(col("__POLARS_CSER_0x10000000b")).then(col("EINTEXP")).otherwise(col("EINTEXP") - col("EINTEXP_prev")).alias("EINTEXP_q"), when(col("__POLARS_CSER_0x10000000b")).then(col("NONII")).otherwise(col("NONII") - col("NONII_prev")).alias("NONII_q"), when(col("__POLARS_CSER_0x10000000b")).then(col("NONIX")).otherwise(col("NONIX") - col("NONIX_prev")).alias("NONIX_q"), when(col("__POLARS_CSER_0x10000000b")).then(col("ELNATR")).otherwise(col("ELNATR") - col("ELNATR_prev")).alias("ELNATR_q"), when(col("__POLARS_CSER_0x10000000b")).then(col("NTLNLS")).otherwise(col("NTLNLS") - col("NTLNLS_prev")).alias("NTLNLS_q")] 
+       WITH_COLUMNS:
+       [(col("q") == 1).alias("__POLARS_CSER_0x10000000b")] 
+        simple π 17/17 ["CERT", "REPDTE", "NETINC", ... 14 other columns]
+          LEFT JOIN:
+          LEFT PLAN ON: [col("CERT"), col("yr"), col("q")]
+            CACHE[id: 9e9d2cbd-e36f-4dbd-a513-9e5bad9bf4d3]
+               WITH_COLUMNS:
+               [col("REPDTE").dt.year().alias("yr"), (((col("REPDTE").dt.month() - 1) // 3) + 1).alias("q")] 
+                Parquet SCAN [D:/NEU/4th/First semester/Big Data Analytics in Finance/FDIC_Bank_Failure_EWS/data_processed/bench/ytd_input_x4.parquet]
+                PROJECT */9 COLUMNS
+                ESTIMATED ROWS: 6730464
+          RIGHT PLAN ON: [col("CERT"), col("yr"), col("q")]
+            SELECT [col("CERT"), col("yr"), col("q"), col("NETINC").alias("NETINC_prev"), col("INTINC").alias("INTINC_prev"), col("EINTEXP").alias("EINTEXP_prev"), col("NONII").alias("NONII_prev"), col("NONIX").alias("NONIX_prev"), col("ELNATR").alias("ELNATR_prev"), col("NTLNLS").alias("NTLNLS_prev")]
+               WITH_COLUMNS:
+               [(col("q") + 1)] 
+                simple π 10/10 ["CERT", "yr", "q", "NETINC", ... 6 other columns]
+                  CACHE[id: 9e9d2cbd-e36f-4dbd-a513-9e5bad9bf4d3]
+          END LEFT JOIN

@@ -1,0 +1,71 @@
+== Physical Plan ==
+AdaptiveSparkPlan (12)
++- Project (11)
+   +- SortMergeJoin LeftOuter (10)
+      :- Sort (4)
+      :  +- Exchange (3)
+      :     +- Project (2)
+      :        +- Scan parquet  (1)
+      +- Sort (9)
+         +- Exchange (8)
+            +- Project (7)
+               +- Filter (6)
+                  +- Scan parquet  (5)
+
+
+(1) Scan parquet 
+Output [9]: [CERT#0L, REPDTE#1, NETINC#2, INTINC#3, EINTEXP#4, NONII#5, NONIX#6, ELNATR#7, NTLNLS#8]
+Batched: true
+Location: InMemoryFileIndex [file:/content/ews/data_processed/bench/ytd_input_x1.parquet]
+ReadSchema: struct<CERT:bigint,REPDTE:timestamp_ntz,NETINC:double,INTINC:double,EINTEXP:double,NONII:double,NONIX:double,ELNATR:double,NTLNLS:double>
+
+(2) Project
+Output [11]: [CERT#0L, REPDTE#1, NETINC#2, INTINC#3, EINTEXP#4, NONII#5, NONIX#6, ELNATR#7, NTLNLS#8, year(cast(REPDTE#1 as date)) AS yr#10, (FLOOR((cast((month(cast(REPDTE#1 as date)) - 1) as double) / 3.0)) + 1) AS q#11L]
+Input [9]: [CERT#0L, REPDTE#1, NETINC#2, INTINC#3, EINTEXP#4, NONII#5, NONIX#6, ELNATR#7, NTLNLS#8]
+
+(3) Exchange
+Input [11]: [CERT#0L, REPDTE#1, NETINC#2, INTINC#3, EINTEXP#4, NONII#5, NONIX#6, ELNATR#7, NTLNLS#8, yr#10, q#11L]
+Arguments: hashpartitioning(CERT#0L, yr#10, q#11L, 200), ENSURE_REQUIREMENTS, [plan_id=23]
+
+(4) Sort
+Input [11]: [CERT#0L, REPDTE#1, NETINC#2, INTINC#3, EINTEXP#4, NONII#5, NONIX#6, ELNATR#7, NTLNLS#8, yr#10, q#11L]
+Arguments: [CERT#0L ASC NULLS FIRST, yr#10 ASC NULLS FIRST, q#11L ASC NULLS FIRST], false, 0
+
+(5) Scan parquet 
+Output [9]: [CERT#20L, REPDTE#21, NETINC#22, INTINC#23, EINTEXP#24, NONII#25, NONIX#26, ELNATR#27, NTLNLS#28]
+Batched: true
+Location: InMemoryFileIndex [file:/content/ews/data_processed/bench/ytd_input_x1.parquet]
+PushedFilters: [IsNotNull(CERT)]
+ReadSchema: struct<CERT:bigint,REPDTE:timestamp_ntz,NETINC:double,INTINC:double,EINTEXP:double,NONII:double,NONIX:double,ELNATR:double,NTLNLS:double>
+
+(6) Filter
+Input [9]: [CERT#20L, REPDTE#21, NETINC#22, INTINC#23, EINTEXP#24, NONII#25, NONIX#26, ELNATR#27, NTLNLS#28]
+Condition : ((isnotnull(CERT#20L) AND isnotnull(year(cast(REPDTE#21 as date)))) AND isnotnull((FLOOR((cast((month(cast(REPDTE#21 as date)) - 1) as double) / 3.0)) + 2)))
+
+(7) Project
+Output [10]: [CERT#20L, year(cast(REPDTE#21 as date)) AS yr#29, (FLOOR((cast((month(cast(REPDTE#21 as date)) - 1) as double) / 3.0)) + 2) AS q#12L, NETINC#22 AS NETINC_prev#13, INTINC#23 AS INTINC_prev#14, EINTEXP#24 AS EINTEXP_prev#15, NONII#25 AS NONII_prev#16, NONIX#26 AS NONIX_prev#17, ELNATR#27 AS ELNATR_prev#18, NTLNLS#28 AS NTLNLS_prev#19]
+Input [9]: [CERT#20L, REPDTE#21, NETINC#22, INTINC#23, EINTEXP#24, NONII#25, NONIX#26, ELNATR#27, NTLNLS#28]
+
+(8) Exchange
+Input [10]: [CERT#20L, yr#29, q#12L, NETINC_prev#13, INTINC_prev#14, EINTEXP_prev#15, NONII_prev#16, NONIX_prev#17, ELNATR_prev#18, NTLNLS_prev#19]
+Arguments: hashpartitioning(CERT#20L, yr#29, q#12L, 200), ENSURE_REQUIREMENTS, [plan_id=24]
+
+(9) Sort
+Input [10]: [CERT#20L, yr#29, q#12L, NETINC_prev#13, INTINC_prev#14, EINTEXP_prev#15, NONII_prev#16, NONIX_prev#17, ELNATR_prev#18, NTLNLS_prev#19]
+Arguments: [CERT#20L ASC NULLS FIRST, yr#29 ASC NULLS FIRST, q#12L ASC NULLS FIRST], false, 0
+
+(10) SortMergeJoin
+Left keys [3]: [CERT#0L, yr#10, q#11L]
+Right keys [3]: [CERT#20L, yr#29, q#12L]
+Join type: LeftOuter
+Join condition: None
+
+(11) Project
+Output [9]: [CERT#0L, REPDTE#1, CASE WHEN (q#11L = 1) THEN NETINC#2 ELSE (NETINC#2 - NETINC_prev#13) END AS NETINC_q#32, CASE WHEN (q#11L = 1) THEN INTINC#3 ELSE (INTINC#3 - INTINC_prev#14) END AS INTINC_q#33, CASE WHEN (q#11L = 1) THEN EINTEXP#4 ELSE (EINTEXP#4 - EINTEXP_prev#15) END AS EINTEXP_q#34, CASE WHEN (q#11L = 1) THEN NONII#5 ELSE (NONII#5 - NONII_prev#16) END AS NONII_q#35, CASE WHEN (q#11L = 1) THEN NONIX#6 ELSE (NONIX#6 - NONIX_prev#17) END AS NONIX_q#36, CASE WHEN (q#11L = 1) THEN ELNATR#7 ELSE (ELNATR#7 - ELNATR_prev#18) END AS ELNATR_q#37, CASE WHEN (q#11L = 1) THEN NTLNLS#8 ELSE (NTLNLS#8 - NTLNLS_prev#19) END AS NTLNLS_q#38]
+Input [21]: [CERT#0L, REPDTE#1, NETINC#2, INTINC#3, EINTEXP#4, NONII#5, NONIX#6, ELNATR#7, NTLNLS#8, yr#10, q#11L, CERT#20L, yr#29, q#12L, NETINC_prev#13, INTINC_prev#14, EINTEXP_prev#15, NONII_prev#16, NONIX_prev#17, ELNATR_prev#18, NTLNLS_prev#19]
+
+(12) AdaptiveSparkPlan
+Output [9]: [CERT#0L, REPDTE#1, NETINC_q#32, INTINC_q#33, EINTEXP_q#34, NONII_q#35, NONIX_q#36, ELNATR_q#37, NTLNLS_q#38]
+Arguments: isFinalPlan=false
+
+
