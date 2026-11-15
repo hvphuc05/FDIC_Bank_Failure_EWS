@@ -43,7 +43,7 @@
   "institutions_duplicate_certs": 0,
   "institutions_null_certs": 0,
   "panel_banks_unmatched_in_institutions": 235,
-  "exit_classification_design_note": "ACTIVE and CHANGEC1 represent terminal regulatory snapshots; they are strictly restricted to exit classification and excluded from feature sets."
+  "exit_classification_design_note": "ACTIVE and CHANGEC1 represent current institution attributes; they are strictly restricted to exit classification and excluded from feature sets."
  },
  "state": {
   "stname_null_rows": 0,

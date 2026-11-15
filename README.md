@@ -1,116 +1,141 @@
 # FDIC Bank Failure Early Warning System (BFT65B)
 
-A scalable, reproducible Big Data Pipeline and Early Warning System (EWS) for predicting bank failures using US FDIC Call Reports (1984Q1 – 2026Q2).
+A reproducible big-data pipeline and early-warning model for bank failures, built on the public FDIC Call Reports (1984Q1 – 2026Q2). Final individual project of **BFT65B – Big Data Analytics in Finance** (National Economics University). Author: Hứa Văn Phúc, student ID 11231006.
 
-## 1. Project Overview & Context
-This project acts from the perspective of a Data Engineer at the Central Bank of Vietnam (SBV). Due to regulatory privacy constraints on domestic supervisory data, the pipeline is constructed and validated on 40+ years of US Federal Deposit Insurance Corporation (FDIC) regulatory filings to benchmark data engineering architectures, point-in-time feature pipelines, and cost-sensitive failure risk classification.
+## 1. Context
 
-## 2. Repository Structure
+The project takes the viewpoint of a data engineer at the State Bank of Vietnam. Vietnamese supervisory data are not public, so the pipeline is built and tested on 42 years of US data: 170 quarterly Call Reports, the failure registry and the institutions directory. The emphasis is on the data pipeline (storage, quality, point-in-time correctness, scalable processing), not on model accuracy.
+
+## 2. Status
+
+| Part | Content | Status |
+|:---|:---|:---|
+| 1 | Acquisition, verification, storage layout benchmark | done |
+| 2 | Data-quality audit, clean point-in-time panel, exit classification | done |
+| 3 | Polars processing, pandas benchmark, PySpark reproduction, scaling argument | in progress (`05_polars_pandas_benchmark.py` drafted, `06_spark_pipeline.py` not started) |
+| 4 | Feature pipeline (23 features, fitted preprocessing) | done |
+| 5 | Validation, models, cost-based threshold | design and development-period results done; **single test evaluation and Spark MLlib demo pending** |
+| 6 | Conclusions | pending |
+
+The test period (2008Q1 – 2025Q2) has **not** been evaluated yet.
+
+## 3. Repository structure
+
 ```text
 FDIC_Bank_Failure_EWS/
-├── .gitignore                      # Strict exclusion of data/ and binary artifacts
-├── requirements.txt                # Pinned dependency manifest
-├── config.py                       # Global paths, parameters, and random seeds (42)
-├── README.md                       # End-to-end execution and reproducibility guide
-├── data_raw/                       # Raw downloads (git-ignored)
-│   └── fdic/
-│       ├── financials/             # 170 quarterly Call Report files (Parquet)
-│       ├── failures.parquet        # Complete failure registry (4,117 records)
-│       ├── institutions.parquet    # Bank structure and event history (27,835 records)
-│       └── manifest.json           # Cryptographic SHA-256 audit manifest
-├── data_processed/                 # Clean panel and leak-free features (git-ignored)
+├── .gitignore                      # data_raw/ and data_processed/ are not committed
+├── requirements.txt                # pinned dependencies (regenerate with pip freeze after the last change)
+├── config.py                       # paths, seed (42), label horizon, split dates, CV folds, feature lists
+├── README.md
+├── docs/fdic/risview_properties.yaml   # official field dictionary (downloaded 2026-11-14)
+├── data_raw/                       # (git-ignored) FDIC downloads + manifest.json with SHA-256
+├── data_processed/                 # (git-ignored) outputs of steps 04-08
+│   ├── failure_events.parquet      # 3,273 in-scope failure/assistance records with COST quality flags
+│   ├── panel_decumulated.parquet   # 1,682,616 rows, YTD flows converted to single quarters
+│   ├── panel/year=*/part-0.parquet # labelled, censored, split panel (1,681,547 rows)
+│   ├── bank_exits.parquet          # exit class of each of the 24,064 charters
+│   ├── features.parquet            # 23 features + labels + split
+│   └── oof_dev.parquet             # out-of-fold predictions on the development period
 ├── src/
-│   ├── 01_download.py              # Resumable, verified API acquisition
-│   ├── 02_storage_benchmark.py     # Quantified storage layout benchmarks
-│   ├── 03_quality_report.py        # Automated data quality audit & problem register
-│   ├── 04_build_panel.py           # Point-in-time bank panel builder (clean panel)
-│   ├── 05_polars_pandas_benchmark.py # Engine performance benchmarking
-│   ├── 06_spark_pipeline.py        # PySpark reproduction & DAG plan analysis
-│   ├── 07_features.py              # CAMELS risk ratio pipeline
-│   └── 08_model.py                 # Time-ordered validation & cost matrix tuning
-├── notebooks/                      # Exploratory data analysis notebooks
+│   ├── 01_download.py              # resumable, verified API download
+│   ├── 02_storage_benchmark.py     # six storage layouts compared
+│   ├── 03_quality_report.py        # automated audit and problem register
+│   ├── 04_build_panel.py           # stages 1-4: events, de-cumulation, labels/split, exits
+│   ├── 05_polars_pandas_benchmark.py   # Part 3 (in progress)
+│   ├── 06_spark_pipeline.py        # Part 3 (planned)
+│   ├── 07_features.py              # stateless feature construction
+│   ├── preprocess.py               # fitted pipeline: winsorize -> median impute -> scale
+│   ├── modeling.py                 # dev-only loader and model definitions
+│   ├── 08_model.py                 # time-ordered validation of three models
+│   ├── 08b_oof_bootstrap.py        # out-of-fold predictions, bank-cluster bootstrap
+│   ├── 08c_calibration_cost.py     # calibration and cost-based thresholds
+│   ├── 08d_policy_comparison.py    # threshold policies compared across folds
+│   ├── check_pipeline_leak.py      # proves the preprocessing statistics come from dev only
+│   └── diagnostics/                # read-only evidence scripts (see section 5)
+├── notebooks/
 └── report/
-    ├── figures/                    # High-resolution benchmark & audit plots
-    │   ├── storage_benchmark.png   # Storage performance visualization (Part 1)
-    │   ├── dq_missing_heatmap.png  # Missingness dynamics over 42 years (Part 2)
-    │   ├── dq_banks_per_quarter.png # Active bank counts & M&A attrition (Part 2)
-    │   └── dq_ytd_sawtooth.png     # Empirical proof of cumulative YTD flows (Part 2)
-    ├── storage_benchmark_results.csv # Empirical benchmark measurements (Part 1)
-    ├── schema_report.csv           # Multi-quarter schema mismatch audit (Part 1)
-    ├── dq_problem_register.csv     # Problem register P01-P10 with handling (Part 2)
-    ├── dq_report.md                # Automated audit findings markdown (Part 2)
-    ├── dq_summary.json             # Provenance & summary metrics (Part 2)
-    ├── dq_*.csv                    # Detailed audit tables (missing, YTD, exits, rules)
-    └── final_report.md             # Complete master report (Course submission)
+    ├── final_report.md             # master report
+    ├── figures/
+    ├── dq_*.csv, dq_report.md, dq_summary.json     # audit outputs
+    ├── panel_split_summary.csv     # rows/positives per split
+    ├── cv_baseline_results.csv, cv_bootstrap_ci.csv, cv_bootstrap_pairs.csv
+    ├── cv_calibration.csv, cv_cost_thresholds.csv, cv_policy_comparison.csv
+    ├── benchmark_T1_decumulate.csv # Part 3 (after the run)
+    └── polars_plan_decumulate.txt  # optimised Polars plan of the de-cumulation
 ```
 
-## 3. Execution Pipeline
+## 4. How to reproduce
 
-### Part 1.1: Data Acquisition & Verification
-The raw data is acquired directly from the public FDIC BankFind API using an atomic, resumable ingestion script:
-```bash
-python src/01_download.py
-```
-To perform an offline, zero-network integrity check on all downloaded files:
-```bash
-python src/01_download.py --verify-only
-```
-* **Verified Counts**: 170 quarters, 1,682,616 rows across 24,064 banks (`financials`), 27,835 records (`institutions`), 4,117 records (`failures`).
-* **Integrity Status**: `RESULT: ALL CHECKS PASSED`.
-
----
-
-### Part 1.2: Storage Layout Design & Benchmarks
-To evaluate storage efficiency and query latency across four decades of Call Reports, run:
-```bash
-python src/02_storage_benchmark.py
-```
-
-#### Empirical Measurements (Full Panel: 1.68M Rows, 33 Columns)
-Benchmarked on Intel Core i5-10210U @ 1.60GHz, 8.0 GB RAM, Windows 11:
-
-| Storage Layout | Files | Size (MB) | vs CSV | Write (s) | Read All (s) | Read 5 Cols (s) | Read 1 Qtr (s) | Data Integrity | Exact Match |
-|:---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| **Raw CSV (Uncompressed)** | 1 | 350.1 MB | 1.00x | 7.20s | 1.60s | 0.617s | 1.655s | Passed | Reference |
-| **Parquet Naive (Snappy)** | 1 | 211.7 MB | 0.60x | 10.27s | 0.589s | 0.117s | 0.032s | Passed | N/A (Schema) |
-| **Parquet Typed (Snappy)** | 1 | 205.9 MB | 0.59x | 10.33s | **0.548s** | **0.085s** | 0.033s | Passed | **Exact Match** |
-| **Parquet Typed (ZSTD)** | 1 | **174.1 MB** | **0.50x** | 10.25s | 0.697s | 0.125s | 0.064s | Passed | **Exact Match** |
-| **Parquet ZSTD (Partitioned: Year)** | 43 | 181.6 MB | 0.52x | **3.18s** | 0.610s | 0.103s | **0.023s** | Passed | **Exact Match** |
-| **Parquet ZSTD (Partitioned: Quarter)** | 170 | 189.6 MB | 0.54x | 3.51s | 0.709s | 0.181s | **0.029s** | Passed | **Exact Match** |
-
-* **Key Takeaway**: Typed Parquet with ZSTD compression cuts disk footprint by **50%**. For selective analytical workloads, Parquet Column Pruning delivers a **7.3x speedup** (0.085s vs 0.617s), while Partition Pruning enables an immediate **70x latency reduction** (0.023s vs 1.655s) when querying crisis quarters (e.g., 2008Q4).
-
----
-
-### Part 2.1: Automated Data Quality Audit
-Audits all 170 quarterly files, the Failure Registry, and the Institutions directory without mutating raw records:
-```bash
-# Smoke test on recent 8 quarters:
-python src/03_quality_report.py --quick
-
-# Full audit across all 170 quarters (~17 seconds):
-python src/03_quality_report.py
-```
-
-#### Core Empirical Audit Findings (1.68M Rows, 170 Quarters)
-* **Panel Integrity**: 1,682,616 rows, 24,064 distinct bank charters (`CERT`), 0 duplicate primary keys `(CERT, REPDTE)`. Only 32 banks exhibit internal reporting hiatuses (92 missing bank-quarters); rolling features must use calendar offsets rather than row offsets.
-* **Problem Register (P01–P10)**: Cataloged in `report/dq_problem_register.csv` with quantitative evidence, downstream handling, and methodological rationale.
-* **Cumulative YTD Income Flows**: Proved empirically via `report/dq_ytd_evidence.csv` and `report/figures/dq_ytd_sawtooth.png`. Net Interest Income (`INTINC`) and Interest Expense (`EINTEXP`) show 100% monotonic within-year progression with a median $|Q4|/|Q1| \approx 4.1$, whereas stock variable `ASSET` remains at 1.04. Within-year de-cumulation is mandatory in Step 04.
-* **Failure Registry Linkage**: 3,273 failures within study scope (1984Q1–2026Q2), with **0% null `CERT`s** and 3,251 successfully linked to Call Reports (99.3%). 
-* **Leakage Gate Safeguard**: 439 failed banks have filings recorded *after* their official closure date (e.g., bridge banks or receivership accounting). Filings post-failure must be censored in Step 04 to prevent target leakage.
-* **Exit Classification**: 19,751 banks exit the panel before 2026Q2. Exactly 3,210 are confirmed failures ($y=1$), while **16,541 are M&A absorptions or voluntary exits ($y=0$)**. Mislabeling M&A exits as failures would corrupt the target distribution by 83%.
-
----
-
-## 4. Environment Setup
 ```bash
 python -m venv .venv
-# Windows PowerShell activation:
-.venv\Scripts\Activate.ps1
+.venv\Scripts\Activate.ps1          # Windows PowerShell
 pip install -r requirements.txt
 ```
 
-## 5. Academic Integrity & AI Disclosure
-In strict adherence to the academic guidelines of course **BFT65B – Big Data Analytics in Finance**:
-* **Data Sources**: Public data provided by the Federal Deposit Insurance Corporation (FDIC) via the BankFind Suite API (`https://api.fdic.gov/banks`).
-* **AI Assistance**: AI assistants (Google Antigravity / Gemini, Claude) were used for boilerplate pipeline architecture review, debugging, and technical documentation profiling. All pipeline logic, data engineering decisions, metric designs, and analytical conclusions were critically inspected, executed, and validated on local hardware by the author.
+Run from the repository root, in this order. Timings are from the author's laptop (Intel Core i5-10210U, 8 GB RAM, Windows 11); "n/r" = not recorded yet.
+
+| Step | Command | Output / assertion | Time |
+|:---|:---|:---|---:|
+| 1.1 | `python src/01_download.py` (add `--verify-only` for an offline check) | 170 quarters, 1,682,616 rows, 24,064 banks; `RESULT: ALL CHECKS PASSED` | n/r (the assignment estimates about 1 h) |
+| 1.2 | `python src/02_storage_benchmark.py` | `report/storage_benchmark_results.csv`, figure | n/r |
+| 2.1 | `python src/03_quality_report.py` (`--quick` for 8 quarters) | `report/dq_*`; 0 duplicate keys | ≈ 11 s |
+| 2.2 | `python src/04_build_panel.py` (`--from-stage k` resumes at stage k) | asserts: null accounting of de-cumulation; no row on/after last failure date; 0 label mismatches against a pandas recomputation | n/r |
+| 4 | `python src/07_features.py` | 1,681,547 rows × 23 features; asserts forbidden-column list is disjoint; 0 mismatches in an independent growth check | n/r |
+| 4 | `python src/check_pipeline_leak.py` | `LEAK CHECK PASSED` | n/r |
+| 5 | `python src/08_model.py` | `report/cv_baseline_results.csv` | < 1 min |
+| 5 | `python src/08b_oof_bootstrap.py` | CIs and paired differences; point estimates equal those of 08 | ≈ 1.5 min |
+| 5 | `python src/08c_calibration_cost.py` | calibration, cost thresholds | n/r |
+| 5 | `python src/08d_policy_comparison.py` | policy comparison | n/r |
+
+All random operations use seed 42 (`config.RANDOM_SEED`; bootstrap: `numpy.random.default_rng(42)`).
+
+## 5. Diagnostic scripts (read-only evidence for the design decisions)
+
+Run from the repository root; none of them writes data. They live in `src/diagnostics/`.
+
+| Script | Question it answers |
+|:---|:---|
+| `check_failures_detail.py`, `…2.py`, `…3.py` | `RESTYPE` mix, `COST` quality, repeated `CERT`s, filings after the event date, `ESTYMD` test, labelable failures per period |
+| `check_ytd_extra.py` | Which variables accumulate within the year (ratios Q2/Q1, Q3/Q1, Q4/Q1) |
+| `check_gap_rows.py` | Why some quarters cannot be de-cumulated |
+| `check_features_prep.py` | Days from report date to failure, null shares by era, scale of variables |
+| `check_part5_prep.py` | `NCLNLS = P9ASSET + NAASSET` identity; validation fold sizes |
+
+## 6. Key verified numbers
+
+* Panel: 1,682,616 bank-quarters, 24,064 banks, 170 quarters, 0 duplicate keys. Failure registry: 4,117 records, 3,273 in scope (2,861 `FAILURE`, 412 `ASSISTANCE`), 3,251 linked to the panel, 22 not linked.
+* **YTD flows.** Seven income-statement variables (`NETINC`, `INTINC`, `EINTEXP`, `NONII`, `NONIX`, `ELNATR`, `NTLNLS`) behave like cumulative year-to-date series (median |Q4|/|Q1| between 4.05 and 5.14; share of bank-years with Q1≤Q2≤Q3≤Q4 from 59.5% to 99.5%), and are converted to single-quarter values in step 04; `ROA`, `ROE`, `NIMY`, `ASSET` are not (ratios ≈ 1).
+* **Exits.** 19,751 banks stop reporting before 2026Q2: 2,837 have a `FAILURE` record, 373 only an `ASSISTANCE` record, 16,541 neither. (An earlier audit counted 3,210 failures because it also included the 373 assistance-only banks; it was corrected.)
+* **After-failure filings.** 1,069 bank-quarter rows with `REPDTE ≥` the last `FAILURE` date are removed (0.064% of the panel).
+* **Split.** Development ≤ 2006Q4: 1,193,818 rows, 2,290 failed banks; gap 2007Q1–Q4; test 2008Q1–2025Q2: 435,446 rows, 545 failed banks; 17,529 rows after 2025Q2 have a null label.
+
+## 7. Point-in-time and leakage rules
+
+| Rule | Implementation |
+|:---|:---|
+| Label looks forward, features do not | y = 1 if a `FAILURE` date falls in (REPDTE, REPDTE + 12 months]; features use only quarter *q*, quarter *q−1* of the same year and quarter *q−4* (calendar join) |
+| No report on or after the failure date | rows with `REPDTE ≥` the last `FAILURE` date of the same `CERT` are removed |
+| Mergers are not failures and are not deleted | exits without a `FAILURE` record keep all rows with y = 0; no censoring by future events |
+| Assistance is not failure | y = 1 only for `RESTYPE = FAILURE`; `ASSISTANCE` is used only for a sensitivity label |
+| Outcome fields are never features | `COST`, `RESTYPE`, `ACTIVE`, `ENDEFYMD`, `CHANGEC1`, exit class and failure-event columns are listed in `FORBIDDEN_FEATURE_COLS` (assertion in step 07) |
+| Fitted preprocessing sees training data only | winsorizer, imputer, scaler are fitted per fold on the training window, and for the final model on development rows only (`check_pipeline_leak.py`) |
+| Test set untouched during design | modelling scripts load only `split = dev` and assert `REPDTE ≤ 2006-12-31` |
+| `COST` | used only for failures of the development window, in the cost step |
+
+## 8. Pre-registered decision rules
+
+Fixed on **2026-11-14**, before the cost and policy results were computed (commit: **[insert commit hash]**):
+
+1. **Model rule.** Among the two learned models, the primary model has the higher average saving over r ∈ {10, 20, 50, 100}, measured on pooled out-of-fold predictions with the in-group optimal threshold; if the difference is below 1 percentage point, logistic regression is chosen.
+2. **Threshold-policy rule.** Choose the (model, policy) pair with the highest average over r of the worst-fold saving (max-min).
+
+Outcome: logistic regression with the threshold p\* = 1/(1+r) (see `report/final_report.md`, §6.7). The design is frozen; the test period is evaluated once.
+
+## 9. Known limitations
+
+Small number of failures in 1994–2007; wide intervals in the third validation fold; untuned hyper-parameters; the false-alarm cost is an assumption; costs counted per bank-quarter; publication delay of reports not modelled; the API gives the latest version of each report (no vintage control); 22 failure records have no panel data (reason not established); `NTLNLS` keeps a residual Q4 effect after de-cumulation.
+
+## 10. Data source and AI disclosure
+
+* **Data:** Federal Deposit Insurance Corporation, BankFind Suite API (`https://api.fdic.gov/banks`), downloaded 2026-11-08/09. Field dictionary: `https://api.fdic.gov/banks/docs/risview_properties.yaml` (downloaded 2026-11-14, copy in `docs/fdic/`). No data file is committed.
+* **AI tools:** Claude (Anthropic) and Google Antigravity / Gemini were used to draft and review code, to discuss design choices and to draft documentation. All code was executed on the author's machine, and every number in the report and in this file comes from the output of those runs. AI-proposed statements that the data did not support were removed or corrected during the project (examples are listed in the report, §8). The author takes responsibility for all content.

@@ -8,7 +8,7 @@ This script executes an automated, comprehensive quality audit across the three 
 
 Principles:
 - MEASURE ONLY: Never deletes, clips, repairs, or imputes raw data at this stage.
-- LEAK-FREE: Enforces temporal bounds (1984-01-01 to panel max date) to prevent look-ahead bias.
+- TEMPORAL BOUNDS: Enforces temporal bounds (1984-01-01 to panel max date) to prevent out-of-scope bias.
 - SINGLE SOURCE OF TRUTH: Re-uses the verified loading and schema unification logic of step 02.
 - EXPLICIT AUDIT TRAIL: Outputs a structured Problem Register (P01..P12) detailing findings,
   domain evidence, proposed downstream handling, and methodological rationale for Part 4.
@@ -439,15 +439,23 @@ def exit_analysis(
     max_q: int,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict[str, Any]]:
     """Classify bank exits using strictly in-scope failures to prevent historical misattribution."""
-    # Methodological fix: Only use CERTs failed WITHIN the study window
-    failed_certs_in_scope = set(failures_in_scope["cert_num"].dropna().astype("int64"))
+    # Label rule (same as step 04): y=1 only for RESTYPE == FAILURE; ASSISTANCE-only is its own group
+    fs = failures_in_scope
+    failed_certs_in_scope = set(fs.loc[fs["RESTYPE"] == "FAILURE", "cert_num"].dropna().astype("int64"))
+    assist_only_certs = set(fs.loc[fs["RESTYPE"] == "ASSISTANCE", "cert_num"].dropna().astype("int64")) \
+        - failed_certs_in_scope
     b = bank.copy()
     not_in_final_q = b["last_q"] < max_q
     is_failed = b.index.isin(failed_certs_in_scope)
+    is_assist = b.index.isin(assist_only_certs)
 
     b["exit_group"] = np.select(
-        [not_in_final_q & is_failed, not_in_final_q & ~is_failed, ~not_in_final_q & is_failed],
-        ["exited_confirmed_failure", "exited_unlisted_other_exit", "reporting_at_end_listed_failed"],
+        [not_in_final_q & is_failed,
+         not_in_final_q & is_assist,
+         not_in_final_q & ~is_failed & ~is_assist,
+         ~not_in_final_q & is_failed],
+        ["exited_confirmed_failure", "exited_assistance_only",
+         "exited_unlisted_other_exit", "reporting_at_end_listed_failed"],
         default="active_reporting_at_panel_end",
     )
     groups = b.groupby("exit_group").size().rename("n_banks").reset_index()
@@ -487,7 +495,7 @@ def exit_analysis(
         "institutions_null_certs": int(inst_df["cert_num"].isna().sum()),
         "panel_banks_unmatched_in_institutions": int((~in_inst).sum()),
         "exit_classification_design_note": (
-            "ACTIVE and CHANGEC1 represent terminal regulatory snapshots; "
+            "ACTIVE and CHANGEC1 represent current institution attributes; "
             "they are strictly restricted to exit classification and excluded from feature sets."
         ),
     }
@@ -546,7 +554,7 @@ def problem_register(
     if len(late):
         log_problem(
             "Missing Values",
-            "Structural temporal missingness due to evolving Basel regimes",
+            "Structural temporal missingness due to variable reporting inception",
             "; ".join(f"{r.column}: first available {int(r.first_year_with_data)}" for r in late.itertuples()),
             "Preserve structural nulls; evaluate native tree-based missingness handling or fit-on-train imputers",
             "Backfilling older periods using modern values violates point-in-time constraints (look-ahead bias).",
@@ -590,7 +598,7 @@ def problem_register(
             "Target Linkage",
             "Failure registry records unmatchable to Call Report panel by CERT",
             f"{fail['in_scope_cert_null']} null CERTs; {fail['in_scope_cert_not_in_panel']} unmatched CERTs (in study scope)",
-            "Audit unmatched entities; document as regulatory perimeter difference (e.g., non-reporting branches)",
+            "Audit unmatched entities; document reason (e.g., trust entity or non-reporting entity)",
             "Prevents misattributing failed institutions as healthy operational entities.",
         )
 
@@ -600,8 +608,8 @@ def problem_register(
             "Target Definition",
             "Multiple failure events associated with a single bank charter",
             f"{fail['in_scope_rows_with_repeated_cert']} in-scope failure rows with repeated CERT numbers",
-            "Use unique failure ID as surrogate key; link failures to active reporting episodes chronologically",
-            "Captures multi-stage FDIC assistance transactions without duplicate row collisions.",
+            "Use unique failure ID as surrogate key; link failures to reporting history chronologically",
+            "Captures repeated FDIC assistance transactions without duplicate row collisions.",
         )
 
     # P08: Post-Exit Financial Reporting
@@ -611,7 +619,7 @@ def problem_register(
             "Financial filings observed after recorded failure date",
             f"{fail['linked_failures_reporting_post_exit']} linked failures exhibit filings dated after failure date",
             "Censor observations post-failure date in Step 04; label only valid operating quarters prior to failure",
-            "Eliminates potential label leakage from receivership or resolution filings.",
+            "Eliminates potential label leakage from post-failure resolution filings.",
         )
 
     # P09: Non-Failure Exits (Mergers & Liquidations)
@@ -619,17 +627,18 @@ def problem_register(
     if len(other) and int(other.iloc[0]) > 0:
         log_problem(
             "Exit Resolution",
-            "Banks ceasing filings without FDIC failure designation (M&A / Voluntary exits)",
-            f"{int(other.iloc[0])} banks disappear from panel without matching FDIC failure registry",
-            "Classify as M&A/voluntary exit (label y=0); apply right-censoring in the 4 quarters preceding absorption",
-            "Assigning target y=1 to healthy merged banks would severely corrupt early-warning precision.",
+            "Banks ceasing filings without an FDIC FAILURE record (merger, voluntary or other exit)",
+            f"{int(other.iloc[0])} banks disappear from the panel with no FAILURE and no ASSISTANCE record",
+            "Keep every row with y=0 ('mergers are not failures'); no right-censoring, because dropping rows "
+            "before a future merger would use information unknown at quarter q",
+            "Assigning y=1 to non-failed exits would corrupt the target; dropping rows by future events would bias the test set.",
         )
 
     # P10: Terminal State Snapshot Hazard
     log_problem(
         "Look-Ahead Bias",
-        "Terminal regulatory snapshot fields in Institutions table",
-        f"Institutions table provides current status (ACTIVE={inst_info['institutions_registry_rows']} records)",
+        "Cross-sectional fields in Institutions table",
+        f"Institutions table provides current status (active status count: {inst_info['institutions_registry_rows']} records)",
         "Strictly isolate Institutions fields to exit categorization; exclude entirely from model feature matrices",
         "Using terminal statuses as model inputs would directly trigger the exam's Leakage Gate penalty.",
     )
@@ -797,7 +806,7 @@ def write_markdown(
         f"- **Failures in Study Scope ({f['scope_temporal_bounds']})**: {f['failures_in_scope']:,}",
         f"  - Successfully Linked to Panel: **{f['in_scope_cert_in_panel']:,}**",
         f"  - Unmatched to Panel: {f['in_scope_cert_not_in_panel']} entities",
-        f"  - In-Scope Null `CERT` Records: **{f['in_scope_cert_null']}** (Zero label leakage)",
+        f"  - In-Scope Null `CERT` Records: **{f['in_scope_cert_null']}** (Complete primary key coverage)",
         f"- **Post-Exit Filings (`gap_days < 0`)**: {f['linked_failures_reporting_post_exit']} institutions",
         f"- **Median Latency (Last Report to Failure Date)**: {f['linked_failures_median_gap_days']:.1f} days",
         "",
