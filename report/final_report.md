@@ -526,7 +526,7 @@ Findings (all from out-of-fold development data):
 
 ## 6.7 Selection rules, decided before the cost results, and the frozen design
 
-Two rules were written into the README on **2026-11-14, before the corresponding results were computed**; the commit that contains them is **[commit hash to be inserted]**.
+Two rules were written into the README on **2026-11-14, before the corresponding results were computed**; the commit that contains them is **508e235**.
 
 * **Rule 1 (model).** Among the two learned models, the primary model is the one with the higher average saving over r ∈ {10, 20, 50, 100}, measured on the pooled out-of-fold predictions with the in-group optimal threshold; if they differ by less than 1 percentage point, logistic regression is chosen for simplicity.
 * **Rule 2 (threshold policy).** The threshold policy is the (model, policy) pair with the highest average over r of the worst-fold saving (max-min).
