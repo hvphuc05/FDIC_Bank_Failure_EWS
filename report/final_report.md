@@ -304,7 +304,7 @@ The four splits add to 1,681,547 rows. Because four overlapping 4-quarter window
 
 ## 4.1 Scope and method
 
-The core transformations of the pipeline are implemented in Polars lazy mode: de-cumulation of year-to-date flows (T1, `src/04_build_panel.py`, stage 2), forward-label construction with censoring (T2, stage 3) and feature ratios with a calendar lag (T3, `src/07_features.py`). This chapter benchmarks **T1**, the first and most data-intensive transformation: a self-join of the panel on `(CERT, year, quarter)` that subtracts the previous quarter's year-to-date value (§3.2.3). T2 and T3 are not benchmarked.
+The core transformations of the pipeline are implemented in Polars lazy mode: de-cumulation of year-to-date flows (T1, `src/04_build_panel.py`, stage 2), forward-label construction with censoring (T2, stage 3) and feature ratios with a calendar lag (T3, `src/07_features.py`). This chapter benchmarks **T1**, the first and most data-intensive transformation: a self-join of the panel on `(CERT, year, quarter)` that subtracts the previous quarter's year-to-date value (§3.2.3). T2 is benchmarked in §4.6; T3 is not.
 
 | Environment | Hardware | Software |
 |:---|:---|:---|
@@ -402,30 +402,76 @@ On the shared Colab machine the runs are noisy (Polars ×4 ranges from 4.75 to 1
 
 | Configuration | ×1 | ×4 |
 |:---|:---|:---|
-| Default (200 shuffle partitions, AQE on) | 9.52 [8.02–11.45] (5 runs) | 39.21 [32.87–44.57] (5 runs) |
+| Default (200 shuffle partitions, AQE on) | 9.52 [8.02–11.45] (5 runs) | 32.71 [30.97–34.87] (5 runs) |
 | 8 shuffle partitions, AQE on | 8.31 [6.29–14.83] (3 runs) | 23.92 [22.85–25.95] (3 runs) |
 | 8 shuffle partitions, AQE off | 7.47 [5.79–9.20] (3 runs) | not run |
 
-Two runs of the default configuration at ×1 gave 9.59 and 9.52 s. Reducing the partitions lowered the ×4 time by 39% (39.21 → 23.92 s); at ×1 the differences between configurations (−13% and −22%) are within the spread of the runs and are not interpreted. Start-up of the Spark session took 10.2–13.8 s and the first run 18.2–20.5 s at ×1 (41.1–43.1 s at ×4), against a median of 7.5–9.5 s at ×1. Other tuning (for example partitioning the input by `CERT`) was not explored.
+Each default configuration was measured twice, in different sessions: ×1 gave 9.59 and 9.52 s, ×2 gave 17.47 and 18.21 s, ×4 gave 39.21 and 32.71 s; the later runs, made with the corrected script, are used in the tables, and the spread between the two runs (up to 17% at ×4) indicates the session-to-session noise. Reducing the partitions lowered the ×4 time by 27% relative to the later default run (32.71 → 23.92 s) and by 39% relative to the earlier one; at ×1 the differences between configurations (−13% and −22%) are within the spread of the runs and are not interpreted. Start-up of the Spark session took 10.2–13.8 s and the first run 18.2–20.5 s at ×1 (39.6 s at ×2, 41.1–43.5 s at ×4), against a median of 7.5–9.5 s at ×1. Other tuning (for example partitioning the input by `CERT`) was not explored.
 
 **Table P3-6: Spark against Polars and pandas on the same Colab machine (seconds)**
 
 | Scale | Spark default | Spark best measured | Polars 1.35.2 | pandas | Spark default / Polars | Spark best / Polars |
 |:---|---:|---:|---:|---:|---:|---:|
 | ×1 | 9.52 | 7.47 | 1.10 | 1.48 | 8.7 | 6.8 |
-| ×2 | 17.47 | – | 2.24 | 2.95 | 7.8 | – |
-| ×4 | 39.21 | 23.92 | 6.34 | 6.90 | 6.2 | 3.8 |
+| ×2 | 18.21 | – | 2.24 | 2.95 | 8.1 | – |
+| ×4 | 32.71 | 23.92 | 6.34 | 6.90 | 5.2 | 3.8 |
 
-The ×2 default time comes from the first run of the script (its JSON recorded the AQE flag wrongly because of an error in the script, which was corrected afterwards; the plan shows that AQE was on). "Best measured" is 8 partitions with AQE off at ×1 and 8 partitions at ×4.
+The ×2 and ×4 default times are from a rerun with the corrected script (an earlier run, whose JSON recorded the AQE flag wrongly because of an error in the script, gave 17.47 and 39.21 s). "Best measured" is 8 partitions with AQE off at ×1 and 8 partitions at ×4.
 
-## 4.6 When is a cluster justified?
+## 4.6 Transformation T2: forward label with censoring
+
+T2 is stage 3 of step 04 (§3.2.4): drop every bank-quarter on or after the last `FAILURE` date of the same `CERT`, set y = 1 if a `FAILURE` date falls in (REPDTE, REPDTE + 12 months], build the alternative label from `FAILURE` and `ASSISTANCE` records, and leave the labels null after 2025Q2. The inputs are a key table (`CERT`, `REPDTE`; 1,682,616 rows) and the event table (3,273 rows). The range condition is implemented as an equality join on `CERT` followed by a filter; this is efficient here because a charter has at most two events in scope. Scale ×k is again k copies with `CERT` shifted by 10 million (keys and events of each copy stay together). Three implementations were written from the same specification: Polars lazy, pandas (a straightforward merge-and-filter formulation; a more specialised pandas implementation was not tried) and PySpark.
+
+**Table P3-7: Correctness of T2**
+
+| Check | Result |
+|:---|:---|
+| Polars, pandas and the panel written by step 04 (laptop, ×1, 1,681,547 rows; strict assertions) | 0 mismatches in `label_observable`, `y_fail_4q` and `y_assist_or_fail_4q` for Polars–step 04, pandas–step 04 and Polars–pandas |
+| Positive rows | `y_fail_4q` 10,870 and `y_assist_or_fail_4q` 12,459, equal to the sums of Table 7 (dev + gap + test) |
+| Non-null labels after the last labelable quarter | 0 |
+| Spark (Colab, ×1): fingerprint | 1,681,547 rows; 10,870 and 12,459 positives; 1,664,018 observable rows (= 1,681,547 − the 17,529 unlabeled rows of Table 7) |
+| Spark (×1) against Polars and against the step-04 panel, row by row (strict) | 0 mismatches in all three label columns |
+| Spark (×4) | counts are exactly four times those of ×1 (6,726,188 rows; 43,480 and 49,836 positives; 6,656,072 observable rows), as expected for independent copies; this is a consistency check, not a row-level comparison |
+
+**How Polars executes T2** (`report/polars_plan_T2_*.txt`, 66 lines unoptimised, 58 optimised):
+
+| Observation | Interpretation |
+|:---|:---|
+| The filter `RESTYPE == "FAILURE"` sits above the scan in the unoptimised plan and appears as `SELECTION` inside the scan in the optimised plan | Predicate pushdown: rows are filtered while reading |
+| The scan of the events table used for the all-events label reads 2 of 3 columns (`PROJECT 2/3 COLUMNS`) | Projection pushdown: `RESTYPE` is not needed there |
+| The unoptimised plan scans the key file three times and the event file three times; the optimised plan has one scan of the key file (a `CACHE` node used by the censoring join and both label branches) and two scans of the event file | Scans are shared instead of repeated |
+| The two filters above each inner join are replaced by one `FUSED PREDICATE` inside the `INNER JOIN` node, with `BUILD SIDE: PreferRight` | The range condition is evaluated while the join output is produced, and the hash table is built on the small event table; there is no dedicated interval-join operator |
+| The condition `REPDTE <= 2025-06-30` is computed once (`__POLARS_CSER_…`) for the three output expressions | Common sub-expression elimination |
+| `UNIQUE … BY None` after each join | Distinct (`CERT`, `REPDTE`) pairs, so that a bank-quarter with two events in the window is flagged once |
+
+**Table P3-8: Laptop, median of 7 runs [min – max]**
+
+| Scale | pandas time (s) | Polars time (s) | Polars in-memory time (s) | pandas peak (MB) | Polars peak (MB) | Polars in-memory peak (MB) |
+|:---|:---|:---|:---|---:|---:|---:|
+| ×1 | 0.51 [0.48–0.54] | 0.12 [0.11–0.13] | 0.17 [0.15–0.19] | 286 | 259 | 395 |
+| ×2 | 1.10 [1.08–1.15] | 0.21 [0.21–0.22] | 0.31 [0.30–0.32] | 468 | 337 | 645 |
+| ×4 | 2.08 [2.01–2.28] | 0.40 [0.39–0.42] | 0.61 [0.58–0.71] | 822 | 482 | 1,109 |
+
+Polars is 4.3, 5.2 and 5.2 times faster than pandas at ×1, ×2 and ×4, with a peak memory 9%, 28% and 41% lower; against its own in-memory engine, the default engine is 1.4–1.5 times faster and uses 34–57% less memory. The advantage over pandas is much larger than for T1 (1.1–1.4 times, §4.3). T2 reads only two columns and joins against a table of a few thousand rows, and the Polars plan shows shared scans, pushdown and a fused predicate; we did not isolate which of these explains the gap, and the ratio applies to the straightforward pandas formulation used here. Doubling the rows roughly doubles the time for both.
+
+**Table P3-9: Colab (2 vCPUs), median [min – max], seconds**
+
+| Scale | pandas | Polars 1.35.2 | Spark (default settings) | Spark / Polars | Spark / pandas |
+|:---|:---|:---|:---|---:|---:|
+| ×1 | 0.43 [0.42–0.80] | 0.20 [0.17–0.60] | 2.52 [1.65–4.12] | 12.6 | 5.9 |
+| ×2 | 0.79 [0.76–1.09] | 0.35 [0.35–0.49] | not run | – | – |
+| ×4 | 1.81 [1.74–2.20] | 0.76 [0.74–1.06] | 5.65 [5.10–7.72] | 7.4 | 3.1 |
+
+Spark ran with 200 shuffle partitions, AQE on and 5 repeats; the start-up of the session took 12.2 s (×1) and 7.1 s (×4), and the first run 8.2 s and 10.4 s. A cold ×1 run therefore costs about 20 s against 0.2 s for Polars. Spark's time grows by a factor of 2.2 when the rows grow four times, against 3.8 for Polars and 4.2 for pandas, so the ratio to Polars falls from 12.6 to 7.4 but Spark is still slower at ×4. The Colab peak memory of Polars (455, 689 and 1,228 MB) is 0–15% *higher* than pandas (413, 684, 1,066 MB), unlike on the laptop; it is closer to the laptop's in-memory engine than to its default engine, which is consistent with, but does not prove, that Polars 1.35.2 uses the in-memory engine by default. Operating system, memory measure and Polars version differ, so the two environments are not compared.
+
+**Spark's plan** (`spark_plan_t2_x1.txt`). The three joins with the small event table (nodes 10, 22 and 37: the censoring aggregate, the `FAILURE` label and the all-events label) are `BroadcastHashJoin … BuildRight` with a `BroadcastExchange` of the small side (nodes 9, 21 and 36), so the large key table is not shuffled for them. The two left joins that attach the label flags back to the censored key table (nodes 28 and 43) are `SortMergeJoin LeftOuter` on `(CERT, REPDTE)`, each preceded by `Exchange hashpartitioning(…, 200)` and `Sort` nodes (13, 14, 25, 27, 40, 42), so the key table is shuffled there, as in T1 (§4.5). Broadcasting a small table against a large one scales out well, but we did not isolate its contribution to the Spark timings, and at this size it brings no advantage over a single node.## 4.7 When is a cluster justified?
 
 1. **Not for this panel.** T1 on the whole 42-year panel (9-column slice) takes Polars about 0.5 s on the laptop and about 1.1 s on Colab at ×1. Spark in local mode on Colab needs about 10 s to start, 20 s for its first run and 7.5–9.5 s per repeated run at ×1, which is 6.8–8.7 times slower than Polars. The panel in Parquet is 174 MB (§2).
-2. **The gap narrows with size but did not close in the measured range.** Spark/Polars falls from 8.7 (×1) to 6.2 (×4) with default settings, and from 6.8 to 3.8 with the best configuration measured. Local mode on two cores cannot show horizontal scaling.
-3. **An illustrative break-even (an assumption, not a measurement).** If Spark scaled linearly with the number of workers of the same kind and shuffle network costs were ignored, matching one Polars node at ×4 would take about 6 workers (39.21 / 6.34) with the default configuration, or about 4 with the better one (23.92 / 6.34). Real shuffles over a network would increase these numbers.
+2. **The gap narrows with size but did not close in the measured range.** Spark/Polars falls from 8.7 (×1) to 5.2 (×4) with default settings, and from 6.8 to 3.8 with the best configuration measured; for T2 it falls from 12.6 (×1) to 7.4 (×4) (§4.6). Local mode on two cores cannot show horizontal scaling.
+3. **An illustrative break-even (an assumption, not a measurement).** If Spark scaled linearly with the number of workers of the same kind and shuffle network costs were ignored, matching one Polars node at ×4 would take about 5 workers (32.71 / 6.34; 6 with the earlier ×4 measurement of 39.21 s) with the default configuration, or about 4 with the better one (23.92 / 6.34). Real shuffles over a network would increase these numbers.
 4. **What would justify a cluster.** (a) Data that no longer fit on one machine even with the streaming engine: the memory slope of default Polars on the laptop is about 0.21 GB per million rows of this 9-column slice, so a 16 GB machine would hold of the order of 70 million rows of the slice if the slope stayed linear (an extrapolation, not measured; the real panel has more columns). (b) Workloads that must run many jobs or serve many users concurrently, or must finish within a time limit that one machine cannot meet. (c) Data that already live in a distributed store, so moving them dominates the cost. Part 6 relates these thresholds to Vietnamese supervisory volumes.
 
-**Limits of this benchmark.** One transformation (T1) on a 9-column slice; larger scales are replicated copies of the same panel, so key distributions do not change; Spark ran in local mode on 2 vCPUs with default settings plus two variations; the Colab machine is shared and noisy; Polars versions differ between environments; three or five repeats were used for the Spark runs.
+**Limits of this benchmark.** Two transformations (T1 on a 9-column slice, T2 on a 2-column key table and a small event table); larger scales are replicated copies of the same panel, so key distributions do not change; Spark ran in local mode on 2 vCPUs with default settings plus two variations; the Colab machine is shared and noisy; Polars versions differ between environments; three or five repeats were used for the Spark runs.
 
 ---
 

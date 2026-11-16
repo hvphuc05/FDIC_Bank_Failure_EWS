@@ -12,7 +12,7 @@ The project takes the viewpoint of a data engineer at the State Bank of Vietnam.
 |:---|:---|:---|
 | 1 | Acquisition, verification, storage layout benchmark | done |
 | 2 | Data-quality audit, clean point-in-time panel, exit classification | done |
-| 3 | Polars processing, pandas benchmark, PySpark reproduction, scaling argument | transformation T1 done (Polars, pandas and Spark benchmark, strict result checks, plan reading); T2 (labels) not benchmarked; write-up in the report §4 |
+| 3 | Polars processing, pandas benchmark, PySpark reproduction, scaling argument | transformations T1 and T2 done (Polars, pandas and Spark benchmarks, strict result checks, plan reading); write-up in the report §4 |
 | 4 | Feature pipeline (23 features, fitted preprocessing) | done |
 | 5 | Validation, models, cost-based threshold | design and development-period results done; **single test evaluation and Spark MLlib demo pending** |
 | 6 | Conclusions | pending |
@@ -45,6 +45,9 @@ FDIC_Bank_Failure_EWS/
 │   ├── 05b_polars_engine_explain.py    # Part 3: Polars plans and stage timing
 │   ├── 06_spark_pipeline.py        # Part 3: T1 in PySpark (laptop with Java, or Google Colab)
 │   ├── 06b_compare_spark.py        # Part 3: strict row-level comparison Spark vs Polars
+│   ├── 05c_label_benchmark.py      # Part 3: T2 (forward label with censoring), Polars vs pandas
+│   ├── 06c_spark_labels.py         # Part 3: T2 in PySpark
+│   ├── 06d_compare_spark_labels.py # Part 3: Spark T2 vs Polars and vs the step-04 panel
 │   ├── 07_features.py              # stateless feature construction
 │   ├── preprocess.py               # fitted pipeline: winsorize -> median impute -> scale
 │   ├── modeling.py                 # dev-only loader and model definitions
@@ -102,6 +105,10 @@ python src/05_polars_pandas_benchmark.py --verify                  # strict equa
 python src/05_polars_pandas_benchmark.py --repeats 7               # report/benchmark_T1_decumulate.csv
 python src/05_polars_pandas_benchmark.py --sweep 1 2 4 8 --sweep-scale 4 --repeats 7   # thread sweep, interleaved runs
 python src/05b_polars_engine_explain.py 4                          # plans and stage timing
+python src/05c_label_benchmark.py --prep --scales 1 2 4            # T2 inputs
+python src/05c_label_benchmark.py --verify                         # strict equality with the panel of step 04
+python src/05c_label_benchmark.py --explain                        # T2 plans
+python src/05c_label_benchmark.py                                  # report/benchmark_T2_labels.csv
 ```
 
 Spark on Google Colab (Java 21 and PySpark 4.0.5 were used): upload a zip with `config.py`, `src/` and `data_processed/bench/ytd_input_x*.parquet` (use `/` separators in the archive), unzip, `pip install pyspark polars psutil pandas pyarrow`, then:
@@ -111,9 +118,12 @@ python src/05_polars_pandas_benchmark.py --engines pandas polars_lazy --repeats 
 python src/06_spark_pipeline.py --input data_processed/bench/ytd_input_x1.parquet --label x1_default --write-out spark_T1_out_x1
 python src/06_spark_pipeline.py --input data_processed/bench/ytd_input_x4.parquet --label x4_default
 python src/06_spark_pipeline.py --input data_processed/bench/ytd_input_x4.parquet --label x4_shuf8 --shuffle-partitions 8 --repeats 3
+python src/05c_label_benchmark.py --engines pandas polars_lazy --repeats 7
+python src/06c_spark_labels.py --keys data_processed/bench/t2_keys_x1.parquet --events data_processed/bench/t2_events_x1.parquet --label t2_x1 --write-out spark_T2_out_x1
+python src/06c_spark_labels.py --keys data_processed/bench/t2_keys_x4.parquet --events data_processed/bench/t2_events_x4.parquet --label t2_x4
 ```
 
-Download `spark_T1_out_x1`, put it in `data_processed/spark_T1_out_x1/` and run `python src/06b_compare_spark.py data_processed/spark_T1_out_x1 1`; it must print `SPARK MATCHES POLARS`.
+Download `spark_T1_out_x1`, put it in `data_processed/spark_T1_out_x1/` and run `python src/06b_compare_spark.py data_processed/spark_T1_out_x1 1`; it must print `SPARK MATCHES POLARS`. For T2, put `spark_T2_out_x1` in `data_processed/spark_T2_out_x1/` and run `python src/06d_compare_spark_labels.py data_processed/spark_T2_out_x1`; it must print `SPARK T2 MATCHES POLARS AND STEP 04`.
 
 ## 5. Diagnostic scripts (read-only evidence for the design decisions)
 
@@ -157,9 +167,10 @@ Fixed on **2026-11-14**, before the cost and policy results were computed (commi
 
 Outcome: logistic regression with the threshold p\* = 1/(1+r) (see `report/final_report.md`, §6.7). The design is frozen; the test period is evaluated once.
 
+3. Rule 3 (test protocol). The test period is evaluated once with the frozen design (logistic regression fitted on the development period, alarm when p ≥ 1/(1+r), r ∈ {10, 20, 50, 100}); baselines B0 and M1 are evaluated in the same run; the secondary evaluations are S1 (excluding positives with a failure within 45 days), S2 (alternative label) and S3 (periods 2008–2014 and 2015–2025). Whatever the outcome, no model, feature, threshold or policy is changed afterwards, and sensitivity analyses that need refitting are run on the development folds only.
 ## 9. Known limitations
 
-Small number of failures in 1994–2007; wide intervals in the third validation fold; untuned hyper-parameters; the false-alarm cost is an assumption; costs counted per bank-quarter; publication delay of reports not modelled; the API gives the latest version of each report (no vintage control); 22 failure records have no panel data (reason not established); `NTLNLS` keeps a residual Q4 effect after de-cumulation; the Part 3 benchmark covers one transformation on a 9-column slice, with replicated data, a noisy shared Colab machine, Spark in local mode only, and different Polars versions on laptop (2.1.0) and Colab (1.35.2).
+Small number of failures in 1994–2007; wide intervals in the third validation fold; untuned hyper-parameters; the false-alarm cost is an assumption; costs counted per bank-quarter; publication delay of reports not modelled; the API gives the latest version of each report (no vintage control); 22 failure records have no panel data (reason not established); `NTLNLS` keeps a residual Q4 effect after de-cumulation; the Part 3 benchmark covers two transformations (T1 on a 9-column slice, T2 on a 2-column key table), with replicated data, a noisy shared Colab machine, Spark in local mode only, and different Polars versions on laptop (2.1.0) and Colab (1.35.2).
 
 ## 10. Data source and AI disclosure
 
