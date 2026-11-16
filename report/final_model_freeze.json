@@ -1,0 +1,25 @@
+{
+  "timestamp_utc": "2026-11-16T10:18:30+00:00",
+  "git_head": "4ed91caea9fef41919bb35fe64e04a1f86fe4e07",
+  "git_status_porcelain": "?? report/benchmark_T2_labels.csv\n?? report/dryrun_calibration.csv\n?? report/dryrun_cost.csv\n?? report/dryrun_metrics.csv\n?? report/dryrun_pairs.csv\n?? report/dryrun_secondary.csv\n?? report/final_model_coefficients.csv\n?? report/polars_plan_T2_optimized.txt\n?? report/polars_plan_T2_unoptimized.txt\n?? spark_T2_out_x1.zip\n?? src/05c_label_benchmark.py\n?? src/06c_spark_labels.py\n?? src/06d_compare_spark_labels.py\n?? t2_colab.zip\n?? tools/apply_part3_T2.py\n?? tools/apply_part3_update.py\n?? tools/t2_section.md",
+  "frozen_commit": "508e235",
+  "frozen_files_changed_since_freeze": false,
+  "model_file": "final_models.joblib",
+  "model_sha256": "b3522259c1fa8a9c97688c1ae0f5656f40493e79e1a09df3f463d4eef5274feb",
+  "fit_rows": 1193818,
+  "fit_positives": 8688,
+  "test_rows_read": 0,
+  "b0_thresholds": {
+    "10": -0.030333727598190308,
+    "20": -0.0362384058535099,
+    "50": -0.0437951423227787,
+    "100": -0.05257666856050491
+  },
+  "versions": {
+    "python": "3.12.3",
+    "sklearn": "1.9.1",
+    "numpy": "2.5.4",
+    "pandas": "3.1.1",
+    "polars": "2.1.0"
+  }
+}
