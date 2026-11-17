@@ -2,6 +2,7 @@
 Frozen design: logistic regression fitted once on the development period; alarm when p >= 1/(1+r), r in {10,20,50,100};
 B0 (low-capital rule) and M1 (gradient boosting) are evaluated once for comparison.
   python src/09b_test_evaluation.py --dry-run   # same code path on pseudo-test = validation fold 3; no test row is read
+  python src/09b_test_evaluation.py --preflight # loads and checks the frozen model file and the output paths; no test row is read
   python src/09b_test_evaluation.py             # the single test evaluation (refuses to run twice)"""
 import argparse
 import datetime as dt
@@ -136,6 +137,33 @@ def dry_run(n_boot):
     print("\nDRY RUN REPRODUCES THE FOLD-3 NUMBERS OF 08b AND 08d (PR-AUC, ROC-AUC, P2 savings)")
 
 
+def preflight():
+    """Exercises the parts of the test run that the dry run does not: model file, hash, unpickling, scoring API,
+    parquet writing. Uses 2,000 DEVELOPMENT rows only; no test row is read and no log is written."""
+    freeze = json.loads(FREEZE_LOG.read_text(encoding="utf-8"))
+    assert sha256(MODEL_PATH) == freeze["model_sha256"], "model file does not match the freeze log"
+    frozen = joblib.load(MODEL_PATH)
+    assert frozen["feature_cols"] == list(C.FEATURE_COLS)
+    df = pl.scan_parquet(C.FEATURE_PATH).filter(pl.col("split") == "dev").select(COLS).head(2000).collect()
+    assert df["REPDTE"].max() <= dt.date.fromisoformat(C.DEV_END)
+    X = df.select(C.FEATURE_COLS).to_numpy().astype(np.float32)
+    scores = {"B0_low_capital_rule": b0_score(X, frozen["B0"]), "B1_logit": frozen["B1_logit"].predict_proba(X)[:, 1],
+              "M1_hist_gbm": frozen["M1_hist_gbm"].predict_proba(X)[:, 1]}
+    for m, s_ in scores.items():
+        assert np.isfinite(s_).all(), m
+    for m in ("B1_logit", "M1_hist_gbm"):
+        assert ((scores[m] >= 0) & (scores[m] <= 1)).all(), m
+    pd.DataFrame({"CERT": df["CERT"].to_numpy(), "REPDTE": df["REPDTE"].to_list(), **scores}).to_parquet(
+        C.PROCESSED_DATA_DIR / "preflight_predictions.parquet", index=False)
+    probe = C.REPORT_DIR / ".write_probe"
+    probe.write_text("ok")
+    probe.unlink()
+    thr = thresholds_for(frozen["B0"]["thresholds"])
+    assert all(np.isfinite(v) for v in thr.values()), "a threshold is infinite"
+    print("PREFLIGHT OK | model sha256", freeze["model_sha256"][:16], "... | sklearn", frozen["sklearn"],
+          "| test log exists:", LOG.exists())
+
+
 def test_run(n_boot, allow_rerun):
     if LOG.exists() and not allow_rerun:
         sys.exit(f"The test period has already been evaluated (see {LOG.name}). Re-running needs --allow-rerun and a documented reason.")
@@ -175,7 +203,13 @@ def test_run(n_boot, allow_rerun):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--preflight", action="store_true")
     ap.add_argument("--allow-rerun", action="store_true")
     ap.add_argument("--n-boot", type=int, default=200)
     a = ap.parse_args()
-    dry_run(a.n_boot) if a.dry_run else test_run(a.n_boot, a.allow_rerun)
+    if a.preflight:
+        preflight()
+    elif a.dry_run:
+        dry_run(a.n_boot)
+    else:
+        test_run(a.n_boot, a.allow_rerun)
