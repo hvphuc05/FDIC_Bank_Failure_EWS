@@ -1,0 +1,66 @@
+SELECT [col("CERT"), col("REPDTE"), (col("REPDTE") <= 2025-06-30 00:00:00).alias("label_observable"), when(col("REPDTE") <= 2025-06-30 00:00:00).then(col("y_fail_4q").fill_null([0])).otherwise(null.cast(Int8)), when(col("REPDTE") <= 2025-06-30 00:00:00).then(col("y_assist_or_fail_4q").fill_null([0])).otherwise(null.cast(Int8))]
+  LEFT JOIN:
+  LEFT PLAN ON: [col("CERT"), col("REPDTE")]
+    LEFT JOIN:
+    LEFT PLAN ON: [col("CERT"), col("REPDTE")]
+      FILTER (col("censor_dt").is_null() | (col("REPDTE") < col("censor_dt")))
+      FROM
+        LEFT JOIN:
+        LEFT PLAN ON: [col("CERT")]
+          Parquet SCAN [D:/NEU/4th/First semester/Big Data Analytics in Finance/FDIC_Bank_Failure_EWS/data_processed/bench/t2_keys_x1.parquet]
+          PROJECT */2 COLUMNS
+          ESTIMATED ROWS: 1682616
+        RIGHT PLAN ON: [col("CERT")]
+          AGGREGATE[maintain_order: false]
+            [col("fail_dt").max().alias("censor_dt")] BY [col("CERT")]
+            FROM
+            FILTER col("RESTYPE") == "FAILURE"
+            FROM
+              Parquet SCAN [D:/NEU/4th/First semester/Big Data Analytics in Finance/FDIC_Bank_Failure_EWS/data_processed/bench/t2_events_x1.parquet]
+              PROJECT */3 COLUMNS
+              ESTIMATED ROWS: 3273
+        END LEFT JOIN
+    RIGHT PLAN ON: [col("CERT"), col("REPDTE")]
+       WITH_COLUMNS:
+       [1.alias("y_fail_4q")] 
+        UNIQUE[maintain_order: false, keep_strategy: Any] BY None
+          SELECT [col("CERT"), col("REPDTE")]
+            FILTER col("fail_dt") <= col("REPDTE").dt.offset_by(["12mo"])
+            FROM
+              FILTER col("fail_dt") > col("REPDTE")
+              FROM
+                INNER JOIN:
+                LEFT PLAN ON: [col("CERT")]
+                  Parquet SCAN [D:/NEU/4th/First semester/Big Data Analytics in Finance/FDIC_Bank_Failure_EWS/data_processed/bench/t2_keys_x1.parquet]
+                  PROJECT */2 COLUMNS
+                  ESTIMATED ROWS: 1682616
+                RIGHT PLAN ON: [col("CERT")]
+                  SELECT [col("CERT"), col("fail_dt")]
+                    FILTER col("RESTYPE") == "FAILURE"
+                    FROM
+                      Parquet SCAN [D:/NEU/4th/First semester/Big Data Analytics in Finance/FDIC_Bank_Failure_EWS/data_processed/bench/t2_events_x1.parquet]
+                      PROJECT */3 COLUMNS
+                      ESTIMATED ROWS: 3273
+                END INNER JOIN
+    END LEFT JOIN
+  RIGHT PLAN ON: [col("CERT"), col("REPDTE")]
+     WITH_COLUMNS:
+     [1.alias("y_assist_or_fail_4q")] 
+      UNIQUE[maintain_order: false, keep_strategy: Any] BY None
+        SELECT [col("CERT"), col("REPDTE")]
+          FILTER col("fail_dt") <= col("REPDTE").dt.offset_by(["12mo"])
+          FROM
+            FILTER col("fail_dt") > col("REPDTE")
+            FROM
+              INNER JOIN:
+              LEFT PLAN ON: [col("CERT")]
+                Parquet SCAN [D:/NEU/4th/First semester/Big Data Analytics in Finance/FDIC_Bank_Failure_EWS/data_processed/bench/t2_keys_x1.parquet]
+                PROJECT */2 COLUMNS
+                ESTIMATED ROWS: 1682616
+              RIGHT PLAN ON: [col("CERT")]
+                SELECT [col("CERT"), col("fail_dt")]
+                  Parquet SCAN [D:/NEU/4th/First semester/Big Data Analytics in Finance/FDIC_Bank_Failure_EWS/data_processed/bench/t2_events_x1.parquet]
+                  PROJECT */3 COLUMNS
+                  ESTIMATED ROWS: 3273
+              END INNER JOIN
+  END LEFT JOIN

@@ -26,8 +26,8 @@ import config as C
 FEATURES = list(C.FEATURE_COLS)
 
 
-def winsor_bounds(train, lo=0.005, hi=0.995, rel_err=0.0):
-    q = train.approxQuantile(FEATURES, [lo, hi], rel_err)      # nulls are ignored; rel_err 0 = exact rank
+def winsor_bounds(train, lo=0.005, hi=0.995, rel_err=0.001):
+    q = train.approxQuantile(FEATURES, [lo, hi], rel_err)      # nulls are ignored; rel_err 0 (exact) ran out of heap memory with 4 GB
     return dict(zip(FEATURES, q))
 
 
@@ -66,8 +66,8 @@ def main():
     ap.add_argument("--features", required=True)
     ap.add_argument("--out-dir", default="mllib_out")
     ap.add_argument("--master", default="local[*]")
-    ap.add_argument("--driver-memory", default="4g")
-    ap.add_argument("--rel-err", type=float, default=0.0)
+    ap.add_argument("--driver-memory", default="8g")
+    ap.add_argument("--rel-err", type=float, default=0.001)
     a = ap.parse_args()
     out = Path(a.out_dir)
     out.mkdir(parents=True, exist_ok=True)

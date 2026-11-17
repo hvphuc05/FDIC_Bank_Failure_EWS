@@ -1,0 +1,24 @@
+{
+  "runs": [
+    {
+      "started_utc": "2026-11-17T00:54:35+00:00",
+      "git_head": "9e33c74fe2891311622288f09df9b641c275977c",
+      "git_status_porcelain": "?? report/benchmark_T2_labels.csv\n?? report/dryrun_calibration.csv\n?? report/dryrun_cost.csv\n?? report/dryrun_metrics.csv\n?? report/dryrun_pairs.csv\n?? report/dryrun_secondary.csv\n?? report/polars_plan_T2_optimized.txt\n?? report/polars_plan_T2_unoptimized.txt\n?? spark_T2_out_x1.zip\n?? src/05c_label_benchmark.py\n?? src/06c_spark_labels.py\n?? src/06d_compare_spark_labels.py\n?? t2_colab.zip\n?? tools/apply_part3_T2.py\n?? tools/apply_part3_update.py\n?? tools/t2_section.md",
+      "model_sha256": "b3522259c1fa8a9c97688c1ae0f5656f40493e79e1a09df3f463d4eef5274feb",
+      "status": "completed",
+      "n_boot": 1000,
+      "seed": 42,
+      "finished_utc": "2026-11-17T01:03:45+00:00",
+      "test_rows": 435446,
+      "test_positive_rows": 2134,
+      "test_positive_banks": 545,
+      "versions": {
+        "python": "3.12.3",
+        "sklearn": "1.9.1",
+        "numpy": "2.5.4",
+        "pandas": "3.1.1",
+        "polars": "2.1.0"
+      }
+    }
+  ]
+}

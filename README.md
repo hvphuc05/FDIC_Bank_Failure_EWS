@@ -14,10 +14,10 @@ The project takes the viewpoint of a data engineer at the State Bank of Vietnam.
 | 2 | Data-quality audit, clean point-in-time panel, exit classification | done |
 | 3 | Polars processing, pandas benchmark, PySpark reproduction, scaling argument | transformations T1 and T2 done (Polars, pandas and Spark benchmarks, strict result checks, plan reading); write-up in the report §4 |
 | 4 | Feature pipeline (23 features, fitted preprocessing) | done |
-| 5 | Validation, models, cost-based threshold | design and development-period results done; **single test evaluation and Spark MLlib demo pending** |
+| 5 | Validation, models, cost-based threshold | done: validation, cost-based policy, single test evaluation (2026-11-17, commit 9e33c74, `report/test_evaluation_log.json`) and Spark MLlib demonstration |
 | 6 | Conclusions | pending |
 
-The test period (2008Q1 – 2025Q2) has **not** been evaluated yet.
+The test period (2008Q1 – 2025Q2) was evaluated **once**, with the frozen design; results are in `report/final_report.md` §6.10.
 
 ## 3. Repository structure
 
@@ -35,7 +35,9 @@ FDIC_Bank_Failure_EWS/
 │   ├── panel/year=*/part-0.parquet # labelled, censored, split panel (1,681,547 rows)
 │   ├── bank_exits.parquet          # exit class of each of the 24,064 charters
 │   ├── features.parquet            # 23 features + labels + split
-│   └── oof_dev.parquet             # out-of-fold predictions on the development period
+│   ├── oof_dev.parquet             # out-of-fold predictions on the development period
+│   ├── final_models.joblib         # frozen final models (SHA-256 in report/final_model_freeze.json)
+│   └── test_predictions.parquet    # test-period scores of the three models (written by 09b)
 ├── src/
 │   ├── 01_download.py              # resumable, verified API download
 │   ├── 02_storage_benchmark.py     # six storage layouts compared
@@ -55,6 +57,11 @@ FDIC_Bank_Failure_EWS/
 │   ├── 08b_oof_bootstrap.py        # out-of-fold predictions, bank-cluster bootstrap
 │   ├── 08c_calibration_cost.py     # calibration and cost-based thresholds
 │   ├── 08d_policy_comparison.py    # threshold policies compared across folds
+│   ├── evalcore.py                 # ranking metrics, cost saving, bank-cluster bootstrap (numpy / scikit-learn only)
+│   ├── 09a_fit_final.py            # final models fitted on the development period only; freeze log
+│   ├── 09b_test_evaluation.py      # --preflight, --dry-run, and the single test evaluation
+│   ├── 09c_mllib_demo.py           # Spark MLlib logistic regression (Colab), development data only
+│   ├── 09d_compare_mllib.py        # --prep (MLlib input) and --compare (MLlib against scikit-learn)
 │   ├── check_pipeline_leak.py      # proves the preprocessing statistics come from dev only
 │   └── diagnostics/                # read-only evidence scripts (see section 5)
 ├── notebooks/                      # Colab notebook of the Spark run (with outputs)
@@ -65,6 +72,8 @@ FDIC_Bank_Failure_EWS/
     ├── panel_split_summary.csv     # rows/positives per split
     ├── cv_baseline_results.csv, cv_bootstrap_ci.csv, cv_bootstrap_pairs.csv
     ├── cv_calibration.csv, cv_cost_thresholds.csv, cv_policy_comparison.csv
+    ├── test_*.csv, test_evaluation_log.json        # the single test evaluation (09b)
+    ├── final_model_freeze.json, final_model_coefficients.csv, mllib_vs_sklearn_*   # frozen model; MLlib comparison
     ├── benchmark_T1_decumulate*.csv, benchmark_T1_thread_sweep.csv   # Part 3 laptop measurements
     ├── polars_plan_decumulate.txt, polars_plan_T1_*.txt, polars_stage_timing_T1.csv   # Polars plans
     └── spark_T1_result_*.json, spark_plan_T1_*.txt   # Part 3 Spark runs (Colab)
@@ -92,6 +101,9 @@ Run from the repository root, in this order. Timings are from the author's lapto
 | 5 | `python src/08b_oof_bootstrap.py` | CIs and paired differences; point estimates equal those of 08 | ≈ 1.5 min |
 | 5 | `python src/08c_calibration_cost.py` | calibration, cost thresholds | n/r |
 | 5 | `python src/08d_policy_comparison.py` | policy comparison | n/r |
+| 5 | `python src/09b_test_evaluation.py --dry-run` | reproduces the fold-3 numbers of 08b/08d by assertion; reads no test row | n/r |
+| 5 | `python src/09a_fit_final.py` | final models on the development period; `report/final_model_freeze.json` | n/r |
+| 5 | `python src/09b_test_evaluation.py --preflight`, then `python src/09b_test_evaluation.py --n-boot 1000` | the single test evaluation (the script refuses a second run without `--allow-rerun`) | ≈ 9 min |
 
 All random operations use seed 42 (`config.RANDOM_SEED`; bootstrap: `numpy.random.default_rng(42)`).
 
@@ -124,6 +136,18 @@ python src/06c_spark_labels.py --keys data_processed/bench/t2_keys_x4.parquet --
 ```
 
 Download `spark_T1_out_x1`, put it in `data_processed/spark_T1_out_x1/` and run `python src/06b_compare_spark.py data_processed/spark_T1_out_x1 1`; it must print `SPARK MATCHES POLARS`. For T2, put `spark_T2_out_x1` in `data_processed/spark_T2_out_x1/` and run `python src/06d_compare_spark_labels.py data_processed/spark_T2_out_x1`; it must print `SPARK T2 MATCHES POLARS AND STEP 04`.
+
+### Part 5 (final model, single test evaluation, MLlib)
+
+```powershell
+python src/09b_test_evaluation.py --dry-run --n-boot 20     # code path check on development fold 3
+python src/09a_fit_final.py                                 # development period only
+python src/09b_test_evaluation.py --preflight               # no test row is read
+python src/09b_test_evaluation.py --n-boot 1000             # THE test evaluation; writes report/test_*.csv and the log
+python src/09d_compare_mllib.py --prep                      # MLlib input (development rows only)
+```
+
+On Colab (Spark 4.0.5, 2 vCPUs): `python src/09c_mllib_demo.py --features data_processed/bench/mllib_dev_features.parquet --out-dir mllib_out --driver-memory 8g --rel-err 0.001`; download `mllib_out/` and run `python src/09d_compare_mllib.py --compare mllib_out`.
 
 ## 5. Diagnostic scripts (read-only evidence for the design decisions)
 
@@ -165,12 +189,12 @@ Fixed on **2026-11-14**, before the cost and policy results were computed (commi
 1. **Model rule.** Among the two learned models, the primary model has the higher average saving over r ∈ {10, 20, 50, 100}, measured on pooled out-of-fold predictions with the in-group optimal threshold; if the difference is below 1 percentage point, logistic regression is chosen.
 2. **Threshold-policy rule.** Choose the (model, policy) pair with the highest average over r of the worst-fold saving (max-min).
 
-Outcome: logistic regression with the threshold p\* = 1/(1+r) (see `report/final_report.md`, §6.7). The design is frozen; the test period is evaluated once.
+Outcome: logistic regression with the threshold p\* = 1/(1+r) (see `report/final_report.md`, §6.7). The design was frozen and the test period was evaluated once on 2026-11-17 (commit 9e33c74; `report/test_evaluation_log.json`).
 
 3. Rule 3 (test protocol). The test period is evaluated once with the frozen design (logistic regression fitted on the development period, alarm when p ≥ 1/(1+r), r ∈ {10, 20, 50, 100}); baselines B0 and M1 are evaluated in the same run; the secondary evaluations are S1 (excluding positives with a failure within 45 days), S2 (alternative label) and S3 (periods 2008–2014 and 2015–2025). Whatever the outcome, no model, feature, threshold or policy is changed afterwards, and sensitivity analyses that need refitting are run on the development folds only.
 ## 9. Known limitations
 
-Small number of failures in 1994–2007; wide intervals in the third validation fold; untuned hyper-parameters; the false-alarm cost is an assumption; costs counted per bank-quarter; publication delay of reports not modelled; the API gives the latest version of each report (no vintage control); 22 failure records have no panel data (reason not established); `NTLNLS` keeps a residual Q4 effect after de-cumulation; the Part 3 benchmark covers two transformations (T1 on a 9-column slice, T2 on a 2-column key table), with replicated data, a noisy shared Colab machine, Spark in local mode only, and different Polars versions on laptop (2.1.0) and Colab (1.35.2).
+Small number of failures in 1994–2007; wide intervals in the third validation fold; untuned hyper-parameters; the false-alarm cost is an assumption; costs counted per bank-quarter; publication delay of reports not modelled; the API gives the latest version of each report (no vintage control); 22 failure records have no panel data (reason not established); on the test period the predicted probabilities are lower than the observed frequencies, so the alarm threshold 1/(1+r) is conservative (report §6.10); `NTLNLS` keeps a residual Q4 effect after de-cumulation; the Part 3 benchmark covers two transformations (T1 on a 9-column slice, T2 on a 2-column key table), with replicated data, a noisy shared Colab machine, Spark in local mode only, and different Polars versions on laptop (2.1.0) and Colab (1.35.2).
 
 ## 10. Data source and AI disclosure
 
