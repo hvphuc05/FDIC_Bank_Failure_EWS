@@ -184,7 +184,7 @@ Run from the repository root; none of them writes data. They live in `src/diagno
 
 ## 8. Pre-registered decision rules
 
-Fixed on **2026-11-14**, before the cost and policy results were computed (commit: **508e235**):
+Written on **2026-11-14** and committed in **508e235**, before the test period was evaluated (the commit post-dates the development cost results, so it proves the order only with respect to the test period):
 
 1. **Model rule.** Among the two learned models, the primary model has the higher average saving over r ∈ {10, 20, 50, 100}, measured on pooled out-of-fold predictions with the in-group optimal threshold; if the difference is below 1 percentage point, logistic regression is chosen.
 2. **Threshold-policy rule.** Choose the (model, policy) pair with the highest average over r of the worst-fold saving (max-min).

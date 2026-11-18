@@ -695,7 +695,7 @@ Findings (all from out-of-fold development data):
 
 ## 6.7 Selection rules, decided before the cost results, and the frozen design
 
-Two rules were written into the README on **2026-11-14, before the corresponding results were computed**; the commit that contains them is **508e235**.
+Two rules were written into the README on **2026-11-14** and committed in **508e235**, before the test period was evaluated. The commit was made after the development results of §6.6 had been computed, so it proves the order only with respect to the test period.
 
 * **Rule 1 (model).** Among the two learned models, the primary model is the one with the higher average saving over r ∈ {10, 20, 50, 100}, measured on the pooled out-of-fold predictions with the in-group optimal threshold; if they differ by less than 1 percentage point, logistic regression is chosen for simplicity.
 * **Rule 2 (threshold policy).** The threshold policy is the (model, policy) pair with the highest average over r of the worst-fold saving (max-min).
@@ -726,7 +726,7 @@ The test period (REPDTE 2008Q1 – 2025Q2) was evaluated **once**, after the des
 
 | Step | Evidence |
 |:---|:---|
-| Design frozen before the cost and policy results | commit 508e235 (README, §6.7); `git diff 508e235` on `config.py`, `src/07_features.py`, `src/preprocess.py`, `src/modeling.py` and `src/08_model.py` was empty when the final models were fitted (`report/final_model_freeze.json`) |
+| Design frozen before any test row was read | commit 508e235 (README Rules 1 and 2, §6.7); `git diff 508e235` on `config.py`, `src/07_features.py`, `src/preprocess.py`, `src/modeling.py` and `src/08_model.py` was empty when the final models were fitted (`report/final_model_freeze.json`) |
 | Evaluation code and the test protocol (Rule 3) committed before any test row was read | commit 4ed91ca; pre-flight check added in commit 9e33c74 |
 | Final models fitted on the development period only (1,193,818 rows, 8,688 positive rows) | `src/09a_fit_final.py`; model file SHA-256 `b3522259c1fa8a9c…`, checked again by the test script; logs committed in c6cc0b3 |
 | Code path validated without the test set | a dry run on validation fold 3 reproduced the PR-AUC, ROC-AUC and P2 savings of `08b` and `08d` (assertions in the script); a pre-flight run checked the model file, scoring and output paths on development rows |
