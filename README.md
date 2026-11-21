@@ -15,7 +15,7 @@ The project takes the viewpoint of a data engineer at the State Bank of Vietnam.
 | 3 | Polars processing, pandas benchmark, PySpark reproduction, scaling argument | transformations T1 and T2 done (Polars, pandas and Spark benchmarks, strict result checks, plan reading); write-up in the report §4 |
 | 4 | Feature pipeline (23 features, fitted preprocessing) | done |
 | 5 | Validation, models, cost-based threshold | done: validation, cost-based policy, single test evaluation (2026-11-17, commit 9e33c74, `report/test_evaluation_log.json`) and Spark MLlib demonstration |
-| 6 | Conclusions | pending |
+| 6 | Conclusions, limitations, implications for Vietnam | done (report §7 and summary; tools/make_part6.py) |
 
 The test period (2008Q1 – 2025Q2) was evaluated **once**, with the frozen design; results are in `report/final_report.md` §6.10.
 
@@ -24,7 +24,8 @@ The test period (2008Q1 – 2025Q2) was evaluated **once**, with the frozen desi
 ```text
 FDIC_Bank_Failure_EWS/
 ├── .gitignore                      # data_raw/ and data_processed/ are not committed
-├── requirements.txt                # pinned dependencies (regenerate with pip freeze after the last change)
+├── requirements.txt                # pinned dependencies (Python 3.12.3)
+├── requirements-spark.txt          # dependencies for PySpark/MLlib on Google Colab
 ├── config.py                       # paths, seed (42), label horizon, split dates, CV folds, feature lists
 ├── README.md
 ├── docs/fdic/risview_properties.yaml   # official field dictionary (downloaded 2026-11-14)
@@ -65,6 +66,7 @@ FDIC_Bank_Failure_EWS/
 │   ├── check_pipeline_leak.py      # proves the preprocessing statistics come from dev only
 │   └── diagnostics/                # read-only evidence scripts (see section 5)
 ├── notebooks/                      # Colab notebook of the Spark run (with outputs)
+├── tools/                          # auxiliary generation, patch, and export scripts
 └── report/
     ├── final_report.md             # master report
     ├── figures/

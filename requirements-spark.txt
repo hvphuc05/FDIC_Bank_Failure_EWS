@@ -1,0 +1,2 @@
+# PySpark for Part 3 and Part 5 benchmarks (run on Colab or local machine with Java 21)
+pyspark==4.0.5

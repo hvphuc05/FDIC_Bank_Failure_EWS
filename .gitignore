@@ -16,7 +16,6 @@ data_processed/
 !report/*.csv
 
 # Temporary inspection scripts
-check_schema.py
 check_failures.py
 
 # Jupyter
@@ -33,3 +32,5 @@ Thumbs.db
 
 data_storage_benchmark/
 *.zip
+
+mllib_out/
