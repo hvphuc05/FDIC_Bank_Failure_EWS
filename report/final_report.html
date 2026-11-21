@@ -26,18 +26,28 @@ h1 {
     padding-bottom: 3px;
     margin-top: 18pt;
     margin-bottom: 8pt;
+    break-after: avoid;
     page-break-after: avoid;
 }
 h2 {
     font-size: 12pt;
     margin-top: 14pt;
     margin-bottom: 6pt;
+    break-after: avoid;
     page-break-after: avoid;
 }
 h3 {
     font-size: 10.5pt;
     margin-top: 10pt;
     margin-bottom: 4pt;
+    break-after: avoid;
+    page-break-after: avoid;
+}
+h4 {
+    font-size: 9.5pt;
+    margin-top: 8pt;
+    margin-bottom: 3pt;
+    break-after: avoid;
     page-break-after: avoid;
 }
 p, ul, ol {
@@ -45,12 +55,17 @@ p, ul, ol {
     margin-bottom: 6pt;
     text-align: justify;
 }
+p:has(+ table), h3:has(+ table), h4:has(+ table) {
+    break-after: avoid;
+    page-break-after: avoid;
+}
 table {
     border-collapse: collapse;
     width: 100%;
     margin-top: 6pt;
     margin-bottom: 10pt;
     font-size: 7.8pt;
+    break-inside: avoid;
     page-break-inside: avoid;
 }
 th, td {
@@ -95,10 +110,12 @@ pre {
 <li><strong>Data Ingestion Date</strong>: 2026-11-08 / 2026-11-09</li>
 <li><strong>Acquisition Methodology</strong>: FDIC Public BankFind API (Automated, Resumable Python Pipeline with SHA-256 Checksums)</li>
 <li><strong>Dataset Scope</strong>: 1984Q1 to 2026Q2 (170 Quarters)</li>
-<li><strong>Verified Row Counts</strong>:</li>
+<li><strong>Verified Row Counts</strong>:<ul>
 <li>Financial Call Reports (<code>financials</code>): 1,682,616 rows across 24,064 distinct bank charters</li>
 <li>Bank Structure &amp; Event Directory (<code>institutions</code>): 27,835 records</li>
 <li>Failure Registry (<code>failures</code>): 4,117 records</li>
+</ul>
+</li>
 <li><strong>Modelling Scope</strong>: bank-quarters 1984Q1 – 2025Q2 carry a complete 4-quarter label; 2025Q3 – 2026Q2 (17,529 rows) stay in the panel with a null label (<code>split = unlabeled</code>)</li>
 <li><strong>Development Period</strong>: REPDTE 1984Q1 – 2006Q4 — 1,193,818 bank-quarters, 8,688 positive rows, <strong>2,290 failed banks</strong> (2,299 <code>FAILURE</code> records with failure date in 1984-04-01 .. 2007-12-31)</li>
 <li><strong>Purged Gap</strong>: 2007Q1 – 2007Q4 (34,754 rows, 48 positive rows), excluded from development and from test</li>
@@ -111,28 +128,36 @@ pre {
 <h1 id="2-part-1-data-acquisition-storage-layout-design">2. Part 1: Data Acquisition &amp; Storage Layout Design</h1>
 <h2 id="21-reproducible-acquisition-architecture-verification">2.1 Reproducible Acquisition Architecture &amp; Verification</h2>
 <p>In bank failure early-warning systems, regulatory integrity demands that the ingestion pipeline is fully reproducible, deterministic, and verifiable. Using the public FDIC BankFind Suite API, an automated, resumable extraction pipeline was implemented (<code>src/01_download.py</code>) covering the complete temporal scope specified by the supervisory authority: <strong>1984Q1 to 2026Q2 (170 consecutive quarters)</strong>.</p>
-<p>To prevent transient network failures or abrupt process interruptions from corrupting the local repository, the acquisition engine implements three core engineering safeguards:
-1. <strong>Resumable Manifest Auditing</strong>: An atomic cryptographic ledger (<code>manifest.json</code>) records the status, row count, API-reported <code>meta.total</code>, and SHA-256 hash digest of each quarterly batch. Any previously downloaded quarter that matches its cryptographic signature is skipped upon re-execution.
-2. <strong>Atomic Ingestion Commits</strong>: Data payloads are staged to a temporary file (<code>.parquet.tmp</code>) and only committed to the persistent directory via an atomic filesystem rename (<code>os.replace</code>) once schema conformance, row counts, and duplicate primary keys <code>(CERT, REPDTE)</code> are strictly verified.
-3. <strong>Rate Limiting &amp; Exponential Back-Off</strong>: Network requests observe HTTP 429 and 5xx status codes, automatically honoring regulatory <code>Retry-After</code> headers and decaying politely with exponential back-off up to 6 retry attempts.</p>
+<p>To prevent transient network failures or abrupt process interruptions from corrupting the local repository, the acquisition engine implements three core engineering safeguards:</p>
+<ol>
+<li><strong>Resumable Manifest Auditing</strong>: An atomic cryptographic ledger (<code>manifest.json</code>) records the status, row count, API-reported <code>meta.total</code>, and SHA-256 hash digest of each quarterly batch. Any previously downloaded quarter that matches its cryptographic signature is skipped upon re-execution.</li>
+<li><strong>Atomic Ingestion Commits</strong>: Data payloads are staged to a temporary file (<code>.parquet.tmp</code>) and only committed to the persistent directory via an atomic filesystem rename (<code>os.replace</code>) once schema conformance, row counts, and duplicate primary keys <code>(CERT, REPDTE)</code> are strictly verified.</li>
+<li><strong>Rate Limiting &amp; Exponential Back-Off</strong>: Network requests observe HTTP 429 and 5xx status codes, automatically honoring regulatory <code>Retry-After</code> headers and decaying politely with exponential back-off up to 6 retry attempts.</li>
+</ol>
 <h3 id="ingestion-audit-data-quality-findings">Ingestion Audit &amp; Data Quality Findings</h3>
-<p>An offline, zero-network integrity audit (<code>python src/01_download.py --verify-only</code>) was conducted across all on-disk artifacts:
-* <strong>Call Reports (<code>financials</code>)</strong>: Exactly <strong>1,682,616 records</strong> across <strong>24,064 distinct bank charters (<code>CERT</code>)</strong> were verified with zero row count discrepancies against API totals and zero duplicate primary keys.
-* <strong>Institution Structure (<code>institutions</code>)</strong>: 27,835 chartered entity records.
-* <strong>Failure Registry (<code>failures</code>)</strong>: 4,117 historical failure events dating from 1934 to 2026.
-  * <em>Audit insight</em>: 488 failure records have a null <code>CERT</code>, and all of them are dated before 1984. <strong>All failure records inside the study scope (1984 onwards) have a non-null <code>CERT</code></strong>, so the label suffers no attrition from missing identifiers. 44 non-null <code>CERT</code> values are repeated in the full registry; <code>ID</code> is used as the surrogate primary key, and the repeated charters inside the scope are analysed in §3.1.4.</p>
+<p>An offline, zero-network integrity audit (<code>python src/01_download.py --verify-only</code>) was conducted across all on-disk artifacts:</p>
+<ul>
+<li><strong>Call Reports (<code>financials</code>)</strong>: Exactly <strong>1,682,616 records</strong> across <strong>24,064 distinct bank charters (<code>CERT</code>)</strong> were verified with zero row count discrepancies against API totals and zero duplicate primary keys.</li>
+<li><strong>Institution Structure (<code>institutions</code>)</strong>: 27,835 chartered entity records.</li>
+<li><strong>Failure Registry (<code>failures</code>)</strong>: 4,117 historical failure events dating from 1934 to 2026.</li>
+<li><em>Audit insight</em>: 488 failure records have a null <code>CERT</code>, and all of them are dated before 1984. <strong>All failure records inside the study scope (1984 onwards) have a non-null <code>CERT</code></strong>, so the label suffers no attrition from missing identifiers. 44 non-null <code>CERT</code> values are repeated in the full registry; <code>ID</code> is used as the surrogate primary key, and the repeated charters inside the scope are analysed in §3.1.4.</li>
+</ul>
 <hr />
 <h2 id="22-schema-mismatch-audit-lossless-typed-storage-design">2.2 Schema Mismatch Audit &amp; Lossless Typed Storage Design</h2>
-<p>A systematic inspection of the 170 raw quarterly Call Report Parquet files (<code>check_schema.py</code>) uncovered a critical data quality challenge: <strong>schema heterogeneity across quarters</strong>. Because the FDIC API dynamically serializes numeric values:
-* Financial balance-sheet amounts (e.g., <code>DEP</code>, <code>CHBAL</code>, <code>LNLSGR</code>) fluctuate between <code>int64</code> and <code>double</code> across different reporting periods depending on whether integer rounding was applied by filing institutions.
-* Some indicators (for example <code>P3ASSET</code>) are entirely null in early years (first non-null year 2001), so naive schema inference assigns a <code>null</code> type rather than a numeric type.
-* Report dates (<code>REPDTE</code>) are natively returned as unstructured strings (<code>large_string</code>).</p>
+<p>A systematic inspection of the 170 raw quarterly Call Report Parquet files (<code>check_schema.py</code>) uncovered a critical data quality challenge: <strong>schema heterogeneity across quarters</strong>. Because the FDIC API dynamically serializes numeric values:</p>
+<ul>
+<li>Financial balance-sheet amounts (e.g., <code>DEP</code>, <code>CHBAL</code>, <code>LNLSGR</code>) fluctuate between <code>int64</code> and <code>double</code> across different reporting periods depending on whether integer rounding was applied by filing institutions.</li>
+<li>Some indicators (for example <code>P3ASSET</code>) are entirely null in early years (first non-null year 2001), so naive schema inference assigns a <code>null</code> type rather than a numeric type.</li>
+<li>Report dates (<code>REPDTE</code>) are natively returned as unstructured strings (<code>large_string</code>).</li>
+</ul>
 <p>Naively concatenating these raw files triggers Arrow schema mismatch exceptions or coerces all numeric fields into 64-bit floating point numbers (<code>float64</code>), which bloats memory consumption and introduces potential IEEE 754 precision issues.</p>
-<p>To resolve this without look-ahead bias, an explicit <strong>Unified Typed Schema</strong> was designed:
-1. <code>REPDTE</code> is cast to <code>date32</code> (saving 75% memory compared to string representation).
-2. <code>CERT</code> is verified to reside within $[-2^{31}, 2^{31}-1]$ (maximum observed: 91,325) and safely cast to <code>int32</code>.
-3. Financial amounts in thousands of USD are verified to contain exclusively whole numbers and safely cast to <code>int64</code>.
-4. Regulatory ratios (<code>ROA</code>, <code>ROE</code>, <code>NIMY</code>, <code>RBC1AAJ</code>, <code>RBCRWAJ</code>) are retained as <code>float64</code>.</p>
+<p>To resolve this without look-ahead bias, an explicit <strong>Unified Typed Schema</strong> was designed:</p>
+<ol>
+<li><code>REPDTE</code> is cast to <code>date32</code> (saving 75% memory compared to string representation).</li>
+<li><code>CERT</code> is verified to reside within $[-2^{31}, 2^{31}-1]$ (maximum observed: 91,325) and safely cast to <code>int32</code>.</li>
+<li>Financial amounts in thousands of USD are verified to contain exclusively whole numbers and safely cast to <code>int64</code>.</li>
+<li>Regulatory ratios (<code>ROA</code>, <code>ROE</code>, <code>NIMY</code>, <code>RBC1AAJ</code>, <code>RBCRWAJ</code>) are retained as <code>float64</code>.</li>
+</ol>
 <p><strong>Mathematical Verification</strong>: The transformation is strictly lossless. A column-by-column fingerprint check comparing the null counts, distinct counts, and sum of values before and after type casting confirmed <strong>zero data loss (<code>exact_equal_to_reference = True</code>)</strong>.</p>
 <hr />
 <h2 id="23-storage-layout-benchmark-empirical-measurements">2.3 Storage Layout Benchmark &amp; Empirical Measurements</h2>
@@ -222,12 +247,14 @@ pre {
 </tbody>
 </table>
 <p><img alt="Storage Benchmark Comparison" src="figures/storage_benchmark.png" />
-<em>Figure 1: Comparison of Disk Footprint and Query Latency across Storage Layouts (Log Scale).</em></p>
+<em>Figure 1: Comparison of disk footprint across storage layouts (MB).</em></p>
 <h3 id="technical-justification-analysis-addressing-question-q1">Technical Justification &amp; Analysis (Addressing Question Q1)</h3>
-<p>The empirical measurements demonstrate why raw CSV is wholly unsuitable for central bank early-warning systems, and validate our recommended production architecture:
-1. <strong>Compression &amp; Storage Footprint</strong>: Uncompressed CSV requires 350.1 MB. Switching to Typed Parquet with <strong>Zstandard (ZSTD)</strong> compression reduces the disk footprint to <strong>174.1 MB (a 50% storage saving)</strong> due to dictionary encoding, bit-packing, and run-length encoding on homogeneous columnar blocks.
-2. <strong>Column Pruning Efficiency</strong>: Early-warning screening algorithms frequently evaluate risk subsets rather than entire balance sheets. Querying 5 key financial indicators (<code>CERT</code>, <code>REPDTE</code>, <code>ASSET</code>, <code>NETINC</code>, <code>ROA</code>) on Parquet Typed Snappy takes <strong>0.085 seconds — a 7.3x speedup over CSV (0.617s)</strong>. CSV forces the engine to read and tokenize all 33 columns line-by-line, whereas Parquet reads only the targeted column chunks directly from disk.
-3. <strong>Partition Pruning (Predicate Pushdown)</strong>: When supervisory inspectors query a specific crisis period (e.g., Q4 2008), the <strong>Year-Partitioned Parquet layout executes in 0.023 seconds, outperforming CSV by over 70x (1.655s)</strong>. The query engine uses folder-level metadata to completely bypass 42 unrelated year directories without loading a single superfluous byte into RAM.</p>
+<p>The empirical measurements demonstrate why raw CSV is wholly unsuitable for central bank early-warning systems, and validate our recommended production architecture:</p>
+<ol>
+<li><strong>Compression &amp; Storage Footprint</strong>: Uncompressed CSV requires 350.1 MB. Switching to Typed Parquet with <strong>Zstandard (ZSTD)</strong> compression reduces the disk footprint to <strong>174.1 MB (a 50% storage saving)</strong> due to dictionary encoding, bit-packing, and run-length encoding on homogeneous columnar blocks.</li>
+<li><strong>Column Pruning Efficiency</strong>: Early-warning screening algorithms frequently evaluate risk subsets rather than entire balance sheets. Querying 5 key financial indicators (<code>CERT</code>, <code>REPDTE</code>, <code>ASSET</code>, <code>NETINC</code>, <code>ROA</code>) on Parquet Typed Snappy takes <strong>0.085 seconds — a 7.3x speedup over CSV (0.617s)</strong>. CSV forces the engine to read and tokenize all 33 columns line-by-line, whereas Parquet reads only the targeted column chunks directly from disk.</li>
+<li><strong>Partition Pruning (Predicate Pushdown)</strong>: When supervisory inspectors query a specific crisis period (e.g., Q4 2008), the <strong>Year-Partitioned Parquet layout executes in 0.023 seconds, outperforming CSV by over 70x (1.655s)</strong>. The query engine uses folder-level metadata to completely bypass 42 unrelated year directories without loading a single superfluous byte into RAM.</li>
+</ol>
 <p><strong>Preliminary conclusion for Q1 (storage)</strong>: Four decades of quarterly Call Reports (~1.68 million rows) can be stored in under <strong>185 MB</strong> and queried in milliseconds on an ordinary commodity laptop using <strong>Year-Partitioned Parquet with ZSTD compression</strong>. At this volume a distributed cluster is not needed for storage or for simple queries; the scaling argument for the processing steps is made from measurements in Part 3.</p>
 <hr />
 <h1 id="3-part-2-data-quality-audit-clean-panel-construction">3. Part 2: Data Quality Audit &amp; Clean Panel Construction</h1>
@@ -282,7 +309,7 @@ pre {
 </table>
 <p>Only 32 banks (0.13%) have internal gaps, so missing quarters are <strong>not</strong> interpolated; every lag or growth feature is computed on calendar dates (<code>REPDTE</code>), never on row offsets.</p>
 <p><img alt="Bank Population Dynamics" src="figures/dq_banks_per_quarter.png" />
-<em>Figure 2: Active bank population and exits, 1984Q1 – 2026Q2.</em></p>
+<em>Figure 2: Active commercial banks per quarter, 1984Q1 – 2026Q2.</em></p>
 <h3 id="312-temporal-missingness">3.1.2 Temporal missingness</h3>
 <p><img alt="Missingness Heatmap" src="figures/dq_missing_heatmap.png" />
 <em>Figure 3: Share of null values by indicator and year.</em></p>
@@ -394,7 +421,7 @@ pre {
 </table>
 <p>("–" = not measured in that script.) The seven income-statement variables follow the pattern expected from a cumulative year-to-date series (ratios close to 2, 3 and 4 against Q1); <code>ROA</code>, <code>ROE</code>, <code>NIMY</code> and the control <code>ASSET</code> do not (ratios close to 1) and are kept as reported. <code>NTLNLS</code> shows ratios 1.83 and 3.00 for Q2 and Q3 and 5.14 for Q4; we treat it as YTD-like but note that its Q4 ratio exceeds 4 and that it is the least clean of the seven (see P15 below). <code>YTD_FLOW_COLUMNS</code> in <code>config.py</code> lists the seven variables.</p>
 <p><img alt="YTD Sawtooth" src="figures/dq_ytd_sawtooth.png" />
-<em>Figure 4: Saw-tooth of cumulative flows versus the stock control.</em></p>
+<em>Figure 4: Saw-tooth pattern of cumulative year-to-date flows (quarterly average INTINC and NETINC).</em></p>
 <p><strong>Consequence.</strong> Unadjusted YTD flows are about four times larger in Q4 than in Q1, so any ratio built from them would drift with the calendar quarter. Step 04 converts them to single-quarter values (§3.2).</p>
 <h3 id="314-failure-registry-linkage-and-post-failure-filings">3.1.4 Failure registry, linkage and post-failure filings</h3>
 <p>The registry holds 4,117 records (3,524 <code>FAILURE</code>, 593 <code>ASSISTANCE</code>), of which <strong>3,273 fall inside the study scope</strong> (1984-01-01 to 2026-06-30): 2,861 <code>FAILURE</code> and 412 <code>ASSISTANCE</code>. All 3,273 have a non-null <code>CERT</code> (the 488 null <code>CERT</code> values in the registry all pre-date 1984). <strong>3,251 events link to the panel; 22 do not</strong> (21 <code>FAILURE</code>, 1 <code>ASSISTANCE</code>; <code>src/04_build_panel.py</code>, stage 4). The reason for these 22 has not been established, and we do not assert one. They carry no panel rows, so they can never become positive labels; this is a recall ceiling of 21 failures out of 2,861 (0.7%).</p>
@@ -1322,7 +1349,8 @@ pre {
 </tbody>
 </table>
 <p>Spark ran with 200 shuffle partitions, AQE on and 5 repeats; the start-up of the session took 12.2 s (×1) and 7.1 s (×4), and the first run 8.2 s and 10.4 s. A cold ×1 run therefore costs about 20 s against 0.2 s for Polars. Spark's time grows by a factor of 2.2 when the rows grow four times, against 3.8 for Polars and 4.2 for pandas, so the ratio to Polars falls from 12.6 to 7.4 but Spark is still slower at ×4. The Colab peak memory of Polars (455, 689 and 1,228 MB) is 0–15% <em>higher</em> than pandas (413, 684, 1,066 MB), unlike on the laptop; it is closer to the laptop's in-memory engine than to its default engine, which is consistent with, but does not prove, that Polars 1.35.2 uses the in-memory engine by default. Operating system, memory measure and Polars version differ, so the two environments are not compared.</p>
-<p><strong>Spark's plan</strong> (<code>spark_plan_t2_x1.txt</code>). The three joins with the small event table (nodes 10, 22 and 37: the censoring aggregate, the <code>FAILURE</code> label and the all-events label) are <code>BroadcastHashJoin … BuildRight</code> with a <code>BroadcastExchange</code> of the small side (nodes 9, 21 and 36), so the large key table is not shuffled for them. The two left joins that attach the label flags back to the censored key table (nodes 28 and 43) are <code>SortMergeJoin LeftOuter</code> on <code>(CERT, REPDTE)</code>, each preceded by <code>Exchange hashpartitioning(…, 200)</code> and <code>Sort</code> nodes (13, 14, 25, 27, 40, 42), so the key table is shuffled there, as in T1 (§4.5). Broadcasting a small table against a large one scales out well, but we did not isolate its contribution to the Spark timings, and at this size it brings no advantage over a single node.## 4.7 When is a cluster justified?</p>
+<p><strong>Spark's plan</strong> (<code>spark_plan_t2_x1.txt</code>). The three joins with the small event table (nodes 10, 22 and 37: the censoring aggregate, the <code>FAILURE</code> label and the all-events label) are <code>BroadcastHashJoin … BuildRight</code> with a <code>BroadcastExchange</code> of the small side (nodes 9, 21 and 36), so the large key table is not shuffled for them. The two left joins that attach the label flags back to the censored key table (nodes 28 and 43) are <code>SortMergeJoin LeftOuter</code> on <code>(CERT, REPDTE)</code>, each preceded by <code>Exchange hashpartitioning(…, 200)</code> and <code>Sort</code> nodes (13, 14, 25, 27, 40, 42), so the key table is shuffled there, as in T1 (§4.5). Broadcasting a small table against a large one scales out well, but we did not isolate its contribution to the Spark timings, and at this size it brings no advantage over a single node.</p>
+<h2 id="47-when-is-a-cluster-justified">4.7 When is a cluster justified?</h2>
 <ol>
 <li><strong>Not for this panel.</strong> T1 on the whole 42-year panel (9-column slice) takes Polars about 0.5 s on the laptop and about 1.1 s on Colab at ×1. Spark in local mode on Colab needs about 10 s to start, 20 s for its first run and 7.5–9.5 s per repeated run at ×1, which is 6.8–8.7 times slower than Polars. The panel in Parquet is 174 MB (§2).</li>
 <li><strong>The gap narrows with size but did not close in the measured range.</strong> Spark/Polars falls from 8.7 (×1) to 5.2 (×4) with default settings, and from 6.8 to 3.8 with the best configuration measured; for T2 it falls from 12.6 (×1) to 7.4 (×4) (§4.6). Local mode on two cores cannot show horizontal scaling.</li>
@@ -2623,17 +2651,23 @@ pre {
 </ol>
 <hr />
 <h1 id="8-references-academic-integrity">8. References &amp; Academic Integrity</h1>
-<p><strong>Data and documentation</strong>
-1. Federal Deposit Insurance Corporation. BankFind Suite API, https://api.fdic.gov/banks (financials, institutions and failures downloaded 2026-11-08/09, verified with SHA-256 manifest).
-2. FDIC field dictionary, https://api.fdic.gov/banks/docs/risview_properties.yaml (downloaded 2026-11-14; copy in <code>docs/fdic/</code>).</p>
-<p><strong>Methods</strong>
-3. Elkan, C. (2001). The foundations of cost-sensitive learning. <em>Proceedings of the 17th International Joint Conference on Artificial Intelligence</em>.
-4. Davis, J. and Goadrich, M. (2006). The relationship between precision-recall and ROC curves. <em>Proceedings of the 23rd International Conference on Machine Learning</em>.
-5. Efron, B. (1979). Bootstrap methods: another look at the jackknife. <em>Annals of Statistics</em>, 7(1).
-6. López de Prado, M. (2018). <em>Advances in Financial Machine Learning</em>. Wiley (purging and embargo in time-ordered validation).</p>
-<p><strong>Software</strong>
-7. scikit-learn (Pedregosa et al., 2011, <em>JMLR</em> 12); Polars; pandas; PyArrow; PySpark. Exact versions are pinned in <code>requirements.txt</code>.</p>
-<p><strong>AI assistance (disclosure).</strong> Claude (Anthropic) and Google Antigravity / Gemini were used to draft and review code, to discuss design choices and to draft report text. Every figure in this report comes from the output of scripts that the author executed on a local laptop. Statements proposed during drafting that the data did not support were removed or corrected (for example an unverified explanation for the 22 unmatched failures, an audit count that merged assistance-only banks into failures, and the right-censoring of pre-merger rows). The author is responsible for all content.</p>
+<p><strong>Data and documentation</strong></p>
+<ol>
+<li>Federal Deposit Insurance Corporation. BankFind Suite API, https://api.fdic.gov/banks (financials, institutions and failures downloaded 2026-11-08/09, verified with SHA-256 manifest).</li>
+<li>FDIC field dictionary, https://api.fdic.gov/banks/docs/risview_properties.yaml (downloaded 2026-11-14; copy in <code>docs/fdic/</code>).</li>
+</ol>
+<p><strong>Methods</strong></p>
+<ol>
+<li>Elkan, C. (2001). The foundations of cost-sensitive learning. <em>Proceedings of the 17th International Joint Conference on Artificial Intelligence</em>.</li>
+<li>Davis, J. and Goadrich, M. (2006). The relationship between precision-recall and ROC curves. <em>Proceedings of the 23rd International Conference on Machine Learning</em>.</li>
+<li>Efron, B. (1979). Bootstrap methods: another look at the jackknife. <em>Annals of Statistics</em>, 7(1).</li>
+<li>López de Prado, M. (2018). <em>Advances in Financial Machine Learning</em>. Wiley (purging and embargo in time-ordered validation).</li>
+</ol>
+<p><strong>Software</strong></p>
+<ol>
+<li>scikit-learn (Pedregosa et al., 2011, <em>JMLR</em> 12); Polars; pandas; PyArrow; PySpark. Exact versions are pinned in <code>requirements.txt</code>.</li>
+</ol>
+<p><strong>AI assistance (disclosure).</strong> Claude (Anthropic) and Google Antigravity / Gemini were used to draft and review code, to discuss design choices and to draft report text. Every figure in this report comes from the output of scripts that the author executed on a local laptop (with Spark demonstrations and MLlib runs executed on Google Colab). Statements proposed during drafting that the data did not support were removed or corrected (for example an unverified explanation for the 22 unmatched failures, an audit count that merged assistance-only banks into failures, and the right-censoring of pre-merger rows). The author is responsible for all content.</p>
 <hr />
 <div class="page-break"></div>
 

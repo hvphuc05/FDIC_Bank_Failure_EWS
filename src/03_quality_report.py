@@ -662,7 +662,7 @@ def figures(df: pd.DataFrame, by_q: pd.DataFrame, by_year: pd.DataFrame, fig_dir
     ax.set_title("Missing Values by Financial Field and Year (%)", fontsize=11, fontweight="bold")
     fig.colorbar(im, ax=ax, label="% Missing")
     fig.tight_layout()
-    fig.savefig(fig_dir / f"dq_missing_heatmap{suffix}.png", dpi=150)
+    fig.savefig(fig_dir / f"dq_missing_heatmap{suffix}.png", dpi=150, bbox_inches="tight")
     plt.close(fig)
 
     # 2. Bank Population Dynamics: Entries & Exits
@@ -681,7 +681,7 @@ def figures(df: pd.DataFrame, by_q: pd.DataFrame, by_year: pd.DataFrame, fig_dir
     axes[1].set_xlabel("Year"); axes[1].legend(fontsize=8)
     axes[1].grid(True, linestyle="--", alpha=0.5)
     fig.tight_layout()
-    fig.savefig(fig_dir / f"dq_banks_per_quarter{suffix}.png", dpi=150)
+    fig.savefig(fig_dir / f"dq_banks_per_quarter{suffix}.png", dpi=150, bbox_inches="tight")
     plt.close(fig)
 
     # 3. YTD Saw-Tooth Dynamics
@@ -691,9 +691,9 @@ def figures(df: pd.DataFrame, by_q: pd.DataFrame, by_year: pd.DataFrame, fig_dir
         ax.plot(mean_flow.index / 4, mean_flow[col], marker=".", markersize=3, color=color, linewidth=1.2)
         ax.set_title(f"Average {col} per Bank ($000s)", fontsize=10, fontweight="bold")
         ax.set_xlabel("Year"); ax.grid(True, linestyle="--", alpha=0.5)
-    fig.suptitle("Empirical Proof of Cumulative YTD Reporting: Periodic Q1 Saw-Tooth Resets", fontsize=12, fontweight="bold")
-    fig.tight_layout()
-    fig.savefig(fig_dir / f"dq_ytd_sawtooth{suffix}.png", dpi=150)
+    fig.suptitle("Cumulative YTD Reporting: Periodic Q1 Saw-Tooth Resets", fontsize=11, fontweight="bold")
+    fig.tight_layout(rect=[0, 0, 1, 0.94])
+    fig.savefig(fig_dir / f"dq_ytd_sawtooth{suffix}.png", dpi=150, bbox_inches="tight")
     plt.close(fig)
 
 

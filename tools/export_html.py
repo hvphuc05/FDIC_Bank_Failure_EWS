@@ -46,18 +46,28 @@ h1 {
     padding-bottom: 3px;
     margin-top: 18pt;
     margin-bottom: 8pt;
+    break-after: avoid;
     page-break-after: avoid;
 }
 h2 {
     font-size: 12pt;
     margin-top: 14pt;
     margin-bottom: 6pt;
+    break-after: avoid;
     page-break-after: avoid;
 }
 h3 {
     font-size: 10.5pt;
     margin-top: 10pt;
     margin-bottom: 4pt;
+    break-after: avoid;
+    page-break-after: avoid;
+}
+h4 {
+    font-size: 9.5pt;
+    margin-top: 8pt;
+    margin-bottom: 3pt;
+    break-after: avoid;
     page-break-after: avoid;
 }
 p, ul, ol {
@@ -65,12 +75,17 @@ p, ul, ol {
     margin-bottom: 6pt;
     text-align: justify;
 }
+p:has(+ table), h3:has(+ table), h4:has(+ table) {
+    break-after: avoid;
+    page-break-after: avoid;
+}
 table {
     border-collapse: collapse;
     width: 100%;
     margin-top: 6pt;
     margin-bottom: 10pt;
     font-size: 7.8pt;
+    break-inside: avoid;
     page-break-inside: avoid;
 }
 th, td {
