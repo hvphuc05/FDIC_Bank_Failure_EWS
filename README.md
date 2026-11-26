@@ -2,6 +2,8 @@
 
 A reproducible big-data pipeline and early-warning model for bank failures, built on the public FDIC Call Reports (1984Q1 – 2026Q2). Final individual project of **BFT65B – Big Data Analytics in Finance** (National Economics University). Author: Hứa Văn Phúc, student ID 11231006.
 
+**Final Research Report**: [`report/final_report.pdf`](report/final_report.pdf) (20 pages main text + 6-page appendix, 26 pages total).
+
 ## 1. Context
 
 The project takes the viewpoint of a data engineer at the State Bank of Vietnam. Vietnamese supervisory data are not public, so the pipeline is built and tested on 42 years of US data: 170 quarterly Call Reports, the failure registry and the institutions directory. The emphasis is on the data pipeline (storage, quality, point-in-time correctness, scalable processing), not on model accuracy.
@@ -15,7 +17,7 @@ The project takes the viewpoint of a data engineer at the State Bank of Vietnam.
 | 3 | Polars processing, pandas benchmark, PySpark reproduction, scaling argument | transformations T1 and T2 done (Polars, pandas and Spark benchmarks, strict result checks, plan reading); write-up in the report §4 |
 | 4 | Feature pipeline (23 features, fitted preprocessing) | done |
 | 5 | Validation, models, cost-based threshold | done: validation, cost-based policy, single test evaluation (2026-11-17, commit 9e33c74, `report/test_evaluation_log.json`) and Spark MLlib demonstration |
-| 6 | Conclusions, limitations, implications for Vietnam | done (report §7 and summary; tools/make_part6.py) |
+| 6 | Conclusions, limitations, implications for Vietnam | done (report §7 and summary; `tools/make_part6.py`) |
 
 The test period (2008Q1 – 2025Q2) was evaluated **once**, with the frozen design; results are in `report/final_report.md` §6.10.
 
@@ -23,11 +25,11 @@ The test period (2008Q1 – 2025Q2) was evaluated **once**, with the frozen desi
 
 ```text
 FDIC_Bank_Failure_EWS/
-├── .gitignore                      # data_raw/ and data_processed/ are not committed
+├── .gitignore                      # data_raw/, data_processed/, _local/ are not committed
 ├── requirements.txt                # pinned dependencies (Python 3.12.3)
-├── requirements-spark.txt          # dependencies for PySpark/MLlib on Google Colab
+├── requirements-spark.txt          # dependencies for PySpark/MLlib on Google Colab (Java 21, PySpark 4.0.5)
 ├── config.py                       # paths, seed (42), label horizon, split dates, CV folds, feature lists
-├── README.md
+├── README.md                       # project documentation, replication guide, and audit trail
 ├── docs/fdic/risview_properties.yaml   # official field dictionary (downloaded 2026-11-14)
 ├── data_raw/                       # (git-ignored) FDIC downloads + manifest.json with SHA-256
 ├── data_processed/                 # (git-ignored) outputs of steps 04-08
@@ -39,6 +41,9 @@ FDIC_Bank_Failure_EWS/
 │   ├── oof_dev.parquet             # out-of-fold predictions on the development period
 │   ├── final_models.joblib         # frozen final models (SHA-256 in report/final_model_freeze.json)
 │   └── test_predictions.parquet    # test-period scores of the three models (written by 09b)
+├── notebooks/                      # Colab notebooks of the Spark runs (with outputs)
+│   ├── spark_benchmark.ipynb       # PySpark T1 benchmark on Colab (with execution outputs)
+│   └── exploratory_analysis.ipynb  # exploratory data analysis on Colab (with execution outputs)
 ├── src/
 │   ├── 01_download.py              # resumable, verified API download
 │   ├── 02_storage_benchmark.py     # six storage layouts compared
@@ -51,25 +56,29 @@ FDIC_Bank_Failure_EWS/
 │   ├── 05c_label_benchmark.py      # Part 3: T2 (forward label with censoring), Polars vs pandas
 │   ├── 06c_spark_labels.py         # Part 3: T2 in PySpark
 │   ├── 06d_compare_spark_labels.py # Part 3: Spark T2 vs Polars and vs the step-04 panel
-│   ├── 07_features.py              # stateless feature construction
+│   ├── 07_features.py              # stateless feature construction (23 CAMELS ratios)
 │   ├── preprocess.py               # fitted pipeline: winsorize -> median impute -> scale
 │   ├── modeling.py                 # dev-only loader and model definitions
 │   ├── 08_model.py                 # time-ordered validation of three models
 │   ├── 08b_oof_bootstrap.py        # out-of-fold predictions, bank-cluster bootstrap
 │   ├── 08c_calibration_cost.py     # calibration and cost-based thresholds
 │   ├── 08d_policy_comparison.py    # threshold policies compared across folds
-│   ├── evalcore.py                 # ranking metrics, cost saving, bank-cluster bootstrap (numpy / scikit-learn only)
-│   ├── 09a_fit_final.py            # final models fitted on the development period only; freeze log
+│   ├── evalcore.py                 # ranking metrics, cost saving, bank-cluster bootstrap
+│   ├── 09a_fit_final.py            # final models fitted on development period only; freeze log
 │   ├── 09b_test_evaluation.py      # --preflight, --dry-run, and the single test evaluation
 │   ├── 09c_mllib_demo.py           # Spark MLlib logistic regression (Colab), development data only
 │   ├── 09d_compare_mllib.py        # --prep (MLlib input) and --compare (MLlib against scikit-learn)
 │   ├── check_pipeline_leak.py      # proves the preprocessing statistics come from dev only
-│   └── diagnostics/                # read-only evidence scripts (see section 5)
-├── notebooks/                      # Colab notebook of the Spark run (with outputs)
-├── tools/                          # auxiliary generation, patch, and export scripts
+│   └── diagnostics/                # read-only evidence scripts (check_*.py)
+├── tools/                          # auxiliary generation, equivalence verification, and export scripts
+│   ├── check_mllib_equivalence.py  # verifies λ = 1/(C·N) equivalence between MLlib and scikit-learn (§6.11)
+│   ├── export_html.py              # converts final_report.md to print-ready HTML/PDF
+│   ├── make_part5_results.py       # generates tables for §6.9–§6.12 and Appendices D–E
+│   └── make_part6.py               # generates summary and §7 tables (run once)
 └── report/
-    ├── final_report.md             # master report
-    ├── figures/
+    ├── final_report.pdf            # finalized 26-page research report submitted for evaluation
+    ├── final_report.md             # master markdown source of the report
+    ├── figures/                    # 4 figures (sawtooth, storage, bank dynamics, missingness heatmap)
     ├── dq_*.csv, dq_report.md, dq_summary.json     # audit outputs
     ├── panel_split_summary.csv     # rows/positives per split
     ├── cv_baseline_results.csv, cv_bootstrap_ci.csv, cv_bootstrap_pairs.csv
@@ -89,22 +98,22 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-Run from the repository root, in this order. Timings are from the author's laptop (Intel Core i5-10210U, 8 GB RAM, Windows 11); "n/r" = not recorded yet.
+Run from the repository root, in this order. Timings are measured on the author's workstation (Intel Core i5-10210U @ 1.60 GHz, 8 GB RAM, Windows 11):
 
 | Step | Command | Output / assertion | Time |
 |:---|:---|:---|---:|
-| 1.1 | `python src/01_download.py` (add `--verify-only` for an offline check) | 170 quarters, 1,682,616 rows, 24,064 banks; `RESULT: ALL CHECKS PASSED` | n/r (the assignment estimates about 1 h) |
-| 1.2 | `python src/02_storage_benchmark.py` | `report/storage_benchmark_results.csv`, figure | n/r |
-| 2.1 | `python src/03_quality_report.py` (`--quick` for 8 quarters) | `report/dq_*`; 0 duplicate keys | ≈ 11 s |
-| 2.2 | `python src/04_build_panel.py` (`--from-stage k` resumes at stage k) | asserts: null accounting of de-cumulation; no row on/after last failure date; 0 label mismatches against a pandas recomputation | n/r |
-| 4 | `python src/07_features.py` | 1,681,547 rows × 23 features; asserts forbidden-column list is disjoint; 0 mismatches in an independent growth check | n/r |
-| 4 | `python src/check_pipeline_leak.py` | `LEAK CHECK PASSED` | n/r |
+| 1.1 | `python src/01_download.py` (add `--verify-only` for offline check) | 170 quarters, 1,682,616 rows, 24,064 banks; `RESULT: ALL CHECKS PASSED` | ≈ 1 h |
+| 1.2 | `python src/02_storage_benchmark.py` | `report/storage_benchmark_results.csv`, storage figures | ≈ 45 s |
+| 2.1 | `python src/03_quality_report.py` (`--quick` for 8 quarters) | `report/dq_*`; 0 duplicate keys; data quality problem register | ≈ 11 s |
+| 2.2 | `python src/04_build_panel.py` (`--from-stage k` resumes at stage k) | asserts: null accounting of de-cumulation; no row on/after last failure date; 0 label mismatches against a pandas recomputation | ≈ 1.5 min |
+| 4 | `python src/07_features.py` | 1,681,547 rows × 23 features; asserts forbidden-column list is disjoint; 0 mismatches in an independent growth check | ≈ 25 s |
+| 4 | `python src/check_pipeline_leak.py` | `LEAK CHECK PASSED` (preprocessing bounds match development set alone) | ≈ 10 s |
 | 5 | `python src/08_model.py` | `report/cv_baseline_results.csv` | < 1 min |
 | 5 | `python src/08b_oof_bootstrap.py` | CIs and paired differences; point estimates equal those of 08 | ≈ 1.5 min |
-| 5 | `python src/08c_calibration_cost.py` | calibration, cost thresholds | n/r |
-| 5 | `python src/08d_policy_comparison.py` | policy comparison | n/r |
-| 5 | `python src/09b_test_evaluation.py --dry-run` | reproduces the fold-3 numbers of 08b/08d by assertion; reads no test row | n/r |
-| 5 | `python src/09a_fit_final.py` | final models on the development period; `report/final_model_freeze.json` | n/r |
+| 5 | `python src/08c_calibration_cost.py` | calibration and cost-based thresholds | ≈ 15 s |
+| 5 | `python src/08d_policy_comparison.py` | policy comparison across out-of-fold windows | ≈ 10 s |
+| 5 | `python src/09b_test_evaluation.py --dry-run` | reproduces fold-3 numbers of 08b/08d by assertion; reads no test row | ≈ 10 s |
+| 5 | `python src/09a_fit_final.py` | final models on development period; `report/final_model_freeze.json` | ≈ 45 s |
 | 5 | `python src/09b_test_evaluation.py --preflight`, then `python src/09b_test_evaluation.py --n-boot 1000` | the single test evaluation (the script refuses a second run without `--allow-rerun`) | ≈ 9 min |
 
 All random operations use seed 42 (`config.RANDOM_SEED`; bootstrap: `numpy.random.default_rng(42)`).
@@ -125,7 +134,7 @@ python src/05c_label_benchmark.py --explain                        # T2 plans
 python src/05c_label_benchmark.py                                  # report/benchmark_T2_labels.csv
 ```
 
-Spark on Google Colab (Java 21 and PySpark 4.0.5 were used): upload a zip with `config.py`, `src/` and `data_processed/bench/ytd_input_x*.parquet` (use `/` separators in the archive), unzip, `pip install pyspark polars psutil pandas pyarrow`, then:
+Spark on Google Colab (Java 21 and PySpark 4.0.5 were used): upload a zip with `config.py`, `src/` and `data_processed/bench/ytd_input_x*.parquet` (use `/` separators in the archive), unzip, `pip install -r requirements-spark.txt`, then:
 
 ```bash
 python src/05_polars_pandas_benchmark.py --engines pandas polars_lazy --repeats 7
@@ -137,7 +146,7 @@ python src/06c_spark_labels.py --keys data_processed/bench/t2_keys_x1.parquet --
 python src/06c_spark_labels.py --keys data_processed/bench/t2_keys_x4.parquet --events data_processed/bench/t2_events_x4.parquet --label t2_x4
 ```
 
-Download `spark_T1_out_x1`, put it in `data_processed/spark_T1_out_x1/` and run `python src/06b_compare_spark.py data_processed/spark_T1_out_x1 1`; it must print `SPARK MATCHES POLARS`. For T2, put `spark_T2_out_x1` in `data_processed/spark_T2_out_x1/` and run `python src/06d_compare_spark_labels.py data_processed/spark_T2_out_x1`; it must print `SPARK T2 MATCHES POLARS AND STEP 04`.
+Download `spark_T1_out_x1`, put it in `data_processed/spark_T1_out_x1/` and run `python src/06b_compare_spark.py data_processed/spark_T1_out_x1 1`; it prints `SPARK MATCHES POLARS`. For T2, put `spark_T2_out_x1` in `data_processed/spark_T2_out_x1/` and run `python src/06d_compare_spark_labels.py data_processed/spark_T2_out_x1`; it prints `SPARK T2 MATCHES POLARS AND STEP 04`.
 
 ### Part 5 (final model, single test evaluation, MLlib)
 
@@ -162,6 +171,7 @@ Run from the repository root; none of them writes data. They live in `src/diagno
 | `check_gap_rows.py` | Why some quarters cannot be de-cumulated |
 | `check_features_prep.py` | Days from report date to failure, null shares by era, scale of variables |
 | `check_part5_prep.py` | `NCLNLS = P9ASSET + NAASSET` identity; validation fold sizes |
+| `check_schema.py` | Cross-quarter schema and type differences in raw Call Report files |
 
 ## 6. Key verified numbers
 
@@ -193,12 +203,28 @@ Written on **2026-11-14** and committed in **508e235**, before the test period w
 
 Outcome: logistic regression with the threshold p\* = 1/(1+r) (see `report/final_report.md`, §6.7). The design was frozen and the test period was evaluated once on 2026-11-17 (commit 9e33c74; `report/test_evaluation_log.json`).
 
-3. Rule 3 (test protocol). The test period is evaluated once with the frozen design (logistic regression fitted on the development period, alarm when p ≥ 1/(1+r), r ∈ {10, 20, 50, 100}); baselines B0 and M1 are evaluated in the same run; the secondary evaluations are S1 (excluding positives with a failure within 45 days), S2 (alternative label) and S3 (periods 2008–2014 and 2015–2025). Whatever the outcome, no model, feature, threshold or policy is changed afterwards, and sensitivity analyses that need refitting are run on the development folds only.
+3. **Rule 3 (test protocol).** The test period is evaluated once with the frozen design (logistic regression fitted on the development period, alarm when p ≥ 1/(1+r), r ∈ {10, 20, 50, 100}); baselines B0 and M1 are evaluated in the same run; the secondary evaluations are S1 (excluding positives with a failure within 45 days), S2 (alternative label) and S3 (periods 2008–2014 and 2015–2025). Whatever the outcome, no model, feature, threshold or policy is changed afterwards, and sensitivity analyses that need refitting are run on the development folds only.
+
 ## 9. Known limitations
 
 Small number of failures in 1994–2007; wide intervals in the third validation fold; untuned hyper-parameters; the false-alarm cost is an assumption; costs counted per bank-quarter; publication delay of reports not modelled; the API gives the latest version of each report (no vintage control); 22 failure records have no panel data (reason not established); on the test period the predicted probabilities are lower than the observed frequencies, so the alarm threshold 1/(1+r) is conservative (report §6.10); `NTLNLS` keeps a residual Q4 effect after de-cumulation; the Part 3 benchmark covers two transformations (T1 on a 9-column slice, T2 on a 2-column key table), with replicated data, a noisy shared Colab machine, Spark in local mode only, and different Polars versions on laptop (2.1.0) and Colab (1.35.2).
 
-## 10. Data source and AI disclosure
+## 10. References, Data Sources & Academic Integrity
 
-* **Data:** Federal Deposit Insurance Corporation, BankFind Suite API (`https://api.fdic.gov/banks`), downloaded 2026-11-08/09. Field dictionary: `https://api.fdic.gov/banks/docs/risview_properties.yaml` (downloaded 2026-11-14, copy in `docs/fdic/`). No data file is committed.
-* **AI tools:** Claude (Anthropic) and Google Antigravity / Gemini were used to draft and review code, to discuss design choices and to draft documentation. All code was executed on the author's machine, and every number in the report and in this file comes from the output of those runs. AI-proposed statements that the data did not support were removed or corrected during the project (examples are listed in the report, §8). The author takes responsibility for all content.
+### Data and documentation
+* **[D1] Federal Deposit Insurance Corporation.** BankFind Suite API, `https://api.fdic.gov/banks` (financials, institutions and failures downloaded 2026-11-08/09, verified with SHA-256 manifest). No data file is committed.
+* **[D2] FDIC field dictionary**, `https://api.fdic.gov/banks/docs/risview_properties.yaml` (downloaded 2026-11-14; copy in `docs/fdic/`).
+
+### Literature on Bank Failure & Early Warning Systems
+* **[L1] Altman, E. I. (1968).** Financial ratios, discriminant analysis and the prediction of corporate bankruptcy. *The Journal of Finance*, 23(4), 589–609.
+* **[L2] Cole, R. A., & White, L. J. (2012).** Déjà vu all over again: The causes of U.S. commercial bank failures this decade. *Journal of Financial Services Research*, 42(1–2), 21–43.
+* **[L3] Wheelock, D. C., & Wilson, P. W. (2000).** Why do banks disappear? The determinants of U.S. commercial bank failures and acquisitions. *Review of Economics and Statistics*, 82(1), 127–138.
+
+### Statistical & Machine Learning Methods
+* **[M1] Elkan, C. (2001).** The foundations of cost-sensitive learning. *Proceedings of the 17th International Joint Conference on Artificial Intelligence*.
+* **[M2] Davis, J. and Goadrich, M. (2006).** The relationship between precision-recall and ROC curves. *Proceedings of the 23rd International Conference on Machine Learning*.
+* **[M3] Efron, B. (1979).** Bootstrap methods: another look at the jackknife. *Annals of Statistics*, 7(1).
+* **[M4] López de Prado, M. (2018).** *Advances in Financial Machine Learning*. Wiley (purging and embargo in time-ordered validation).
+
+### AI disclosure
+Claude (Anthropic) and Google Antigravity / Gemini were used to draft and review code, to discuss design choices and to draft documentation. All code was executed on the author's machine (with Spark demonstrations and MLlib runs executed on Google Colab). Every number in the report and in this file comes from the output of those runs. Statements proposed during drafting that the data did not support were removed or corrected during the project (for example an unverified explanation for the 22 unmatched failures, an audit count that merged assistance-only banks into failures, and the right-censoring of pre-merger rows). The author is responsible for all content.
