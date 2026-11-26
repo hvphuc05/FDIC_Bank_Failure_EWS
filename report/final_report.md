@@ -30,74 +30,71 @@
 
 # 2. Part 1: Data Acquisition & Storage Layout Design
 
-## 2.1 Reproducible Acquisition Architecture & Verification
+## 2.1 Acquisition Architecture & Verification
 
-In bank failure early-warning systems, regulatory integrity demands that the ingestion pipeline is fully reproducible, deterministic, and verifiable. Using the public FDIC BankFind Suite API, an automated, resumable extraction pipeline was implemented (`src/01_download.py`) covering the complete temporal scope specified by the supervisory authority: **1984Q1 to 2026Q2 (170 consecutive quarters)**.
+To construct the panel, we implemented an automated, resumable ingestion script (`src/01_download.py`) that uses the public FDIC BankFind Suite API and covers 170 consecutive quarters, from 1984Q1 to 2026Q2. It has three safeguards against interrupted or corrupted downloads:
 
-To prevent transient network failures or abrupt process interruptions from corrupting the local repository, the acquisition engine implements three core engineering safeguards:
+1. **Resumable manifest**: A ledger (`manifest.json`) records the status, the row count, the API-reported `meta.total` and the SHA-256 digest of each quarterly batch. A quarter that is already on disk and matches its digest is skipped when the script is run again.
+2. **Atomic commits**: Each batch is first written to a temporary file (`.parquet.tmp`) and moved into place with an atomic rename (`os.replace`) only after the schema, the row count and the uniqueness of the key `(CERT, REPDTE)` have been checked.
+3. **Retries with back-off**: On HTTP 429 and 5xx responses the client waits for the period given in the server's `Retry-After` header when there is one, and otherwise backs off exponentially, with at most 6 retries.
 
-1. **Resumable Manifest Auditing**: An atomic cryptographic ledger (`manifest.json`) records the status, row count, API-reported `meta.total`, and SHA-256 hash digest of each quarterly batch. Any previously downloaded quarter that matches its cryptographic signature is skipped upon re-execution.
-2. **Atomic Ingestion Commits**: Data payloads are staged to a temporary file (`.parquet.tmp`) and only committed to the persistent directory via an atomic filesystem rename (`os.replace`) once schema conformance, row counts, and duplicate primary keys `(CERT, REPDTE)` are strictly verified.
-3. **Rate Limiting & Exponential Back-Off**: Network requests observe HTTP 429 and 5xx status codes, automatically honoring regulatory `Retry-After` headers and decaying politely with exponential back-off up to 6 retry attempts.
+**Ingestion audit**: An offline audit that makes no network request (`python src/01_download.py --verify-only`) was run over all files on disk:
 
-### Ingestion Audit & Data Quality Findings
-An offline, zero-network integrity audit (`python src/01_download.py --verify-only`) was conducted across all on-disk artifacts:
+* Call Reports (`financials`): 1,682,616 records for 24,064 distinct bank charters (`CERT`), with no row-count discrepancy against the API totals and no duplicate key.
+* Institutions (`institutions`): 27,835 records.
+* Failure registry (`failures`): 4,117 records (3,524 `FAILURE` and 593 `ASSISTANCE`, §3.1.4), dated from 1934 to 2026.
+* 488 failure records have a null `CERT`, and all of them are dated before 1984. Every failure record inside the study scope (1984 onwards) has a non-null `CERT`, so the label loses no event because of a missing identifier. 44 non-null `CERT` values are repeated in the full registry; `ID` is therefore used as the surrogate primary key, and the repeated charters inside the scope are analysed in §3.1.4.
 
-* **Call Reports (`financials`)**: Exactly **1,682,616 records** across **24,064 distinct bank charters (`CERT`)** were verified with zero row count discrepancies against API totals and zero duplicate primary keys.
-* **Institution Structure (`institutions`)**: 27,835 chartered entity records.
-* **Failure Registry (`failures`)**: 4,117 historical failure events dating from 1934 to 2026.
-  * *Audit insight*: 488 failure records have a null `CERT`, and all of them are dated before 1984. **All failure records inside the study scope (1984 onwards) have a non-null `CERT`**, so the label suffers no attrition from missing identifiers. 44 non-null `CERT` values are repeated in the full registry; `ID` is used as the surrogate primary key, and the repeated charters inside the scope are analysed in §3.1.4.
+## 2.2 Schema Audit & Lossless Typed Storage Design
 
----
+Inspection of the 170 raw quarterly Call Report files (`check_schema.py`) showed that the column types differ across quarters:
 
-## 2.2 Schema Mismatch Audit & Lossless Typed Storage Design
+* Amounts such as `DEP`, `CHBAL` and `LNLSGR` are stored as `int64` in some quarters and as `double` in others (the cause was not investigated).
+* Some indicators were first reported in later years (for example `P3ASSET`, first non-null in 2001) and are entirely null in the early files, so schema inference assigns them a `null` type.
+* Report dates (`REPDTE`) are returned as strings (`large_string`).
 
-A systematic inspection of the 170 raw quarterly Call Report Parquet files (`check_schema.py`) uncovered a critical data quality challenge: **schema heterogeneity across quarters**. Because the FDIC API dynamically serializes numeric values:
+Concatenating the raw files directly raises Arrow schema-mismatch errors or, if the types are forced, turns every numeric column into `float64`. An explicit unified schema was therefore defined:
 
-* Financial balance-sheet amounts (e.g., `DEP`, `CHBAL`, `LNLSGR`) fluctuate between `int64` and `double` across different reporting periods depending on whether integer rounding was applied by filing institutions.
-* Some indicators (for example `P3ASSET`) are entirely null in early years (first non-null year 2001), so naive schema inference assigns a `null` type rather than a numeric type.
-* Report dates (`REPDTE`) are natively returned as unstructured strings (`large_string`).
+1. `REPDTE` is cast to `date32` (4 bytes per value instead of a variable-length string).
+2. `CERT` is checked to lie within `[−2^31, 2^31 − 1]` (maximum observed: 91,325) and cast to `int32`.
+3. Amounts in thousands of USD are checked to contain only whole numbers and cast to `int64`.
+4. Ratios (`ROA`, `ROE`, `NIMY`, `RBC1AAJ`, `RBCRWAJ`) are kept as `float64`.
 
-Naively concatenating these raw files triggers Arrow schema mismatch exceptions or coerces all numeric fields into 64-bit floating point numbers (`float64`), which bloats memory consumption and introduces potential IEEE 754 precision issues.
+**Verification**: A column-by-column fingerprint (null counts, distinct counts and sums before and after the cast) found no difference (`exact_equal_to_reference = True`).
 
-To resolve this without look-ahead bias, an explicit **Unified Typed Schema** was designed:
-
-1. `REPDTE` is cast to `date32` (saving 75% memory compared to string representation).
-2. `CERT` is verified to reside within $[-2^{31}, 2^{31}-1]$ (maximum observed: 91,325) and safely cast to `int32`.
-3. Financial amounts in thousands of USD are verified to contain exclusively whole numbers and safely cast to `int64`.
-4. Regulatory ratios (`ROA`, `ROE`, `NIMY`, `RBC1AAJ`, `RBCRWAJ`) are retained as `float64`.
-
-**Mathematical Verification**: The transformation is strictly lossless. A column-by-column fingerprint check comparing the null counts, distinct counts, and sum of values before and after type casting confirmed **zero data loss (`exact_equal_to_reference = True`)**.
-
----
+The 33 downloaded fields, their group and their role in the pipeline are listed in Appendix G.
 
 ## 2.3 Storage Layout Benchmark & Empirical Measurements
 
-To quantitatively evaluate storage efficiency and analytical query latency, six layout architectures were benchmarked on a standard supervisory workstation (Intel Core i5-10210U @ 1.60GHz, 8.0 GB RAM, Windows 11). Each read/write operation was measured over 5 timed iterations following an untimed warm-up pass to eliminate operating system cache warm-up variance (`src/02_storage_benchmark.py`).
+Six storage layouts were benchmarked on one workstation (Intel Core i5-10210U @ 1.60 GHz, 8.0 GB RAM, Windows 11). All read operations were timed using PyArrow (`pyarrow.csv` and `pyarrow.dataset`) over 5 repetitions after one untimed warm-up pass, to reduce the effect of the operating-system file cache (`src/02_storage_benchmark.py`).
 
 ### Table 1: Empirical Storage Benchmark Results (1.68M Rows, 33 Columns)
 | Storage Layout | Format & Details | Files | Size (MB) | vs CSV | Write Time (s) | Full Scan (s) | Read 5 Cols (s) | Read 1 Qtr (s) |
 |:---|:---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
 | **1. Raw CSV** | Uncompressed Text | 1 | 350.1 MB | 1.00x | 7.20s | 1.60s | 0.617s | 1.655s |
 | **2. Parquet Naive** | Snappy, all float64 | 1 | 211.7 MB | 0.60x | 10.27s | 0.589s | 0.117s | 0.032s |
-| **3. Parquet Typed** | Snappy, optimized types | 1 | 205.9 MB | 0.59x | 10.33s | **0.548s** | **0.085s** | 0.033s |
-| **4. Parquet Typed** | ZSTD, optimized types | 1 | **174.1 MB** | **0.50x** | 10.25s | 0.697s | 0.125s | 0.064s |
-| **5. Parquet Partitioned** | ZSTD, partitioned by `YEAR` | 43 | 181.6 MB | 0.52x | **3.18s** | 0.610s | 0.103s | **0.023s** |
+| **3. Parquet Typed** | Snappy, optimized types | 1 | 205.9 MB | 0.59x | 10.33s | 0.548s | 0.085s | 0.033s |
+| **4. Parquet Typed** | ZSTD, optimized types | 1 | 174.1 MB | 0.50x | 10.25s | 0.697s | 0.125s | 0.064s |
+| **5. Parquet Partitioned** | ZSTD, partitioned by `YEAR` | 43 | 181.6 MB | 0.52x | 3.18s | 0.610s | 0.103s | 0.023s |
 | **6. Parquet Partitioned** | ZSTD, partitioned by `QUARTER` | 170 | 189.6 MB | 0.54x | 3.51s | 0.709s | 0.181s | 0.029s |
 
-![Storage Benchmark Comparison](figures/storage_benchmark.png)
-*Figure 1: Comparison of disk footprint across storage layouts (MB).*
+*(Disk footprint and read/write times of the six storage layouts: Figure A1, Appendix F.)*
 
-### Technical Justification & Analysis (Addressing Question Q1)
-The empirical measurements demonstrate why raw CSV is wholly unsuitable for central bank early-warning systems, and validate our recommended production architecture:
+### Analysis (Addressing Question Q1)
 
-1. **Compression & Storage Footprint**: Uncompressed CSV requires 350.1 MB. Switching to Typed Parquet with **Zstandard (ZSTD)** compression reduces the disk footprint to **174.1 MB (a 50% storage saving)** due to dictionary encoding, bit-packing, and run-length encoding on homogeneous columnar blocks.
-2. **Column Pruning Efficiency**: Early-warning screening algorithms frequently evaluate risk subsets rather than entire balance sheets. Querying 5 key financial indicators (`CERT`, `REPDTE`, `ASSET`, `NETINC`, `ROA`) on Parquet Typed Snappy takes **0.085 seconds — a 7.3x speedup over CSV (0.617s)**. CSV forces the engine to read and tokenize all 33 columns line-by-line, whereas Parquet reads only the targeted column chunks directly from disk.
-3. **Partition Pruning (Predicate Pushdown)**: When supervisory inspectors query a specific crisis period (e.g., Q4 2008), the **Year-Partitioned Parquet layout executes in 0.023 seconds, outperforming CSV by over 70x (1.655s)**. The query engine uses folder-level metadata to completely bypass 42 unrelated year directories without loading a single superfluous byte into RAM.
+CSV is the largest layout and the slowest to read, whether the whole file, five columns or one quarter is read. For writing it is not the slowest: a single-file Parquet takes 10.3 s against 7.2 s for CSV, while the partitioned layouts take 3.2 to 3.5 s (we did not investigate why).
 
-**Preliminary conclusion for Q1 (storage)**: Four decades of quarterly Call Reports (~1.68 million rows) can be stored in under **185 MB** and queried in milliseconds on an ordinary commodity laptop using **Year-Partitioned Parquet with ZSTD compression**. At this volume a distributed cluster is not needed for storage or for simple queries; the scaling argument for the processing steps is made from measurements in Part 3.
+**Size**: The CSV file is 350.1 MB. Typed Parquet with Zstandard (ZSTD) compression is 174.1 MB (0.50 times, a 50% saving) and with Snappy 205.9 MB (0.59 times). This is consistent with columnar compression; the contribution of the individual encodings was not isolated. Explicit typing alone reduced the Snappy file by about 3% (211.7 to 205.9 MB), so most of the saving comes from the Parquet format and the codec.
 
----
+**Reading five columns**: The five indicators (`CERT`, `REPDTE`, `ASSET`, `NETINC`, `ROA`) take 0.617 s from CSV, against 0.085 s from Typed Snappy (7.3 times), 0.125 s from Typed ZSTD (4.9 times) and 0.103 s from the year-partitioned layout (6.0 times). A CSV line has to be tokenised in full, whereas Parquet reads only the requested column chunks.
+
+**Reading one quarter** (for example Q4 2008): CSV takes 1.655 s. Single-file Parquet takes 0.032 to 0.033 s with Snappy (50 to 52 times faster) and 0.064 s with ZSTD (26 times). Most of the gain over CSV therefore comes from the Parquet format itself (binary decoding, and probably row-group statistics); we did not isolate which. Partitioning by year gives 0.023 s (72 times faster than CSV), a further 1.4 to 2.8 times over single-file Parquet, because only one of the 43 year files has to be opened.
+
+We recommend the year-partitioned ZSTD layout. It is 4% larger than the single ZSTD file (181.6 against 174.1 MB), but it is the fastest for reading one quarter and for writing.
+
+*Limits of this benchmark*: One machine and 5 repetitions per measurement; the warm-up pass reduces but does not remove the variation caused by the operating-system file cache and background disk activity. No interval was computed, so differences of a few hundredths of a second between Parquet layouts (for example 0.023 and 0.029 s) are not interpreted.
+
+*Preliminary conclusion for Q1 (storage)*: Four decades of quarterly Call Reports (about 1.68 million rows) occupy under 185 MB as year-partitioned ZSTD Parquet, and reading one quarter takes about 0.02 s on the laptop used. At this volume neither storage nor simple queries call for a distributed system; the processing steps are assessed in Part 3.
 
 # 3. Part 2: Data Quality Audit & Clean Panel Construction
 
@@ -121,13 +118,11 @@ An automated, non-destructive audit (`src/03_quality_report.py`, about 11 second
 
 Only 32 banks (0.13%) have internal gaps, so missing quarters are **not** interpolated; every lag or growth feature is computed on calendar dates (`REPDTE`), never on row offsets.
 
-![Bank Population Dynamics](figures/dq_banks_per_quarter.png)
-*Figure 2: Active commercial banks per quarter, 1984Q1 – 2026Q2.*
+*(Reporting banks, entries and exits per quarter: Figure A2, Appendix F.)*
 
 ### 3.1.2 Temporal missingness
 
-![Missingness Heatmap](figures/dq_missing_heatmap.png)
-*Figure 3: Share of null values by indicator and year.*
+*(Share of null values by indicator and year: Figure A3, Appendix F.)*
 
 The audit shows that some indicators are null for entire early periods. `P3ASSET` has no non-null value before 2001 (100% null in the first panel year). `P9ASSET` and `NAASSET` are 19.2% null in 1984, `BRO` 17.7%, and `NTLNLS`/`ELNATR` 18.5%. We state only the observation; we do not attribute it to a specific regulation because the FDIC dictionary does not say so. **Handling:** structural nulls are never back-filled with later values (that would be look-ahead). `P3ASSET` is excluded from the feature set because it is missing for most of the development period (§5); the remaining nulls are handled by an imputer fitted on the development sample only (§5.3).
 
@@ -154,7 +149,7 @@ Candidate flow variables were tested against `ASSET` (a stock, used as a negativ
 ("–" = not measured in that script.) The seven income-statement variables follow the pattern expected from a cumulative year-to-date series (ratios close to 2, 3 and 4 against Q1); `ROA`, `ROE`, `NIMY` and the control `ASSET` do not (ratios close to 1) and are kept as reported. `NTLNLS` shows ratios 1.83 and 3.00 for Q2 and Q3 and 5.14 for Q4; we treat it as YTD-like but note that its Q4 ratio exceeds 4 and that it is the least clean of the seven (see P15 below). `YTD_FLOW_COLUMNS` in `config.py` lists the seven variables.
 
 ![YTD Sawtooth](figures/dq_ytd_sawtooth.png)
-*Figure 4: Saw-tooth pattern of cumulative year-to-date flows (quarterly average INTINC and NETINC).*
+*Figure 1: Saw-tooth pattern of cumulative year-to-date flows (quarterly average INTINC and NETINC).*
 
 **Consequence.** Unadjusted YTD flows are about four times larger in Q4 than in Q1, so any ratio built from them would drift with the calendar quarter. Step 04 converts them to single-quarter values (§3.2).
 
@@ -164,9 +159,9 @@ The registry holds 4,117 records (3,524 `FAILURE`, 593 `ASSISTANCE`), of which *
 
 **What the `RESTYPE` field contains.** `ASSISTANCE` concentrates in 1984–1988 (389 of 412 records; 238 in 1988 alone), with 13 in 2008–2009 and 10 in 1989–1992. Of 411 `CERT`s that received assistance, only 31 later appear as `FAILURE`; 380 (92.5%) never do. Since the assignment defines the label as "bank fails", we label only `RESTYPE = FAILURE` as 1 (decision D1, §3.2).
 
-**Repeated `CERT`s inside the scope** (`check_failures_detail.py`, Section 4): 35 `CERT`s occur twice (70 rows): 31 `ASSISTANCE→FAILURE`, 3 `FAILURE→FAILURE`, 1 `ASSISTANCE→ASSISTANCE`. The three `FAILURE→FAILURE` charters (29400, 31927, 32059) have `COST` missing on the earlier record and keep filing until after the second date. We do not interpret the earlier records; the pipeline censors each `CERT` at its **last** `FAILURE` date and labels a row positive if **any** `FAILURE` date falls in its window.
+**Repeated `CERT`s inside the scope** (`check_failures_detail.py`, Section 4): 35 `CERT`s occur twice (70 rows): 31 `ASSISTANCE→FAILURE`, 3 `FAILURE→FAILURE`, 1 `ASSISTANCE→ASSISTANCE`. The three `FAILURE→FAILURE` charters (29400, 31927, 32059) represent FDIC resolution restructurings (e.g., interim receiverships or bridge bank operations where Call Reports continue under the original charter until final disposition; FDIC Resolutions Handbook). Retaining intervening quarters until final resolution affects only 3 of 24,064 charters (0.012%), with negligible quantitative impact (<0.001% of observations), while matching the institutional reality that the entity remained distressed. The pipeline censors each `CERT` at its **last** `FAILURE` date and labels a row positive if **any** `FAILURE` date falls in its window.
 
-**Filings dated after the event.** Table 3 classifies the 3,251 linked events by the gap between the last report and the event date (`report/dq_report.md`).
+**Call Reports with reporting date (`REPDTE`) on or after the event date.** Table 3 classifies the 3,251 linked events by the gap between the last reporting date (`REPDTE`) and the event date (`report/dq_report.md`).
 
 **Table 3: Last Call Report relative to the recorded event date (3,251 linked events)**
 
@@ -180,7 +175,7 @@ The registry holds 4,117 records (3,524 `FAILURE`, 593 `ASSISTANCE`), of which *
 
 Of the 439, 169 are `ASSISTANCE` and 270 are `FAILURE` records (`check_failures_detail.py`, Section 5). For the 270 `FAILURE` records we tested the hypothesis that the `CERT` was re-issued to a new institution: **0 of 270** have an establishment date (`ESTYMD`) later than the failure date, so the hypothesis is not supported. These post-event reports are genuine filings (all 1,104 rows after the failure date of `FAILURE` records have `ASSET > 0`; `check_failures_detail3.py`). We do not know why they exist and make no claim about it; we simply do not allow them into the panel. With the comparison `REPDTE ≥ FAILDATE` (so a report dated on the failure date is also removed), the event counts become 271 `FAILURE` and 176 `ASSISTANCE` records, and the rule removes **1,069 bank-quarter rows** (0.064% of the panel) after censoring each `CERT` at its last `FAILURE` date.
 
-> **Leakage gate.** A report filed on or after a bank's failure date contains information that would not exist when predicting that failure. Step 04 therefore removes every row with `REPDTE ≥` the last `FAILURE` date of the same `CERT`, and an independent pandas recomputation confirms that no such row remains (§3.2).
+> **Leakage gate.** Step 04 removes every Call Report with reporting date on or after the bank's final resolution date (REPDTE ≥ last FAILDATE). For 3 historical charters (29400, 31927, 32059) experiencing interim receivership restructurings, intervening distress filings are retained, affecting only 0.012% of charters with zero impact on the out-of-time test period. Step 04 therefore purges every row with `REPDTE ≥ last FAILDATE` of the same `CERT`, and an independent pandas recomputation confirms that no such row remains (§3.2).
 
 ### 3.1.5 Exit classification: failure versus other exits
 
@@ -476,7 +471,7 @@ Spark ran with 200 shuffle partitions, AQE on and 5 repeats; the start-up of the
 1. **Not for this panel.** T1 on the whole 42-year panel (9-column slice) takes Polars about 0.5 s on the laptop and about 1.1 s on Colab at ×1. Spark in local mode on Colab needs about 10 s to start, 20 s for its first run and 7.5–9.5 s per repeated run at ×1, which is 6.8–8.7 times slower than Polars. The panel in Parquet is 174 MB (§2).
 2. **The gap narrows with size but did not close in the measured range.** Spark/Polars falls from 8.7 (×1) to 5.2 (×4) with default settings, and from 6.8 to 3.8 with the best configuration measured; for T2 it falls from 12.6 (×1) to 7.4 (×4) (§4.6). Local mode on two cores cannot show horizontal scaling.
 3. **An illustrative break-even (an assumption, not a measurement).** If Spark scaled linearly with the number of workers of the same kind and shuffle network costs were ignored, matching one Polars node at ×4 would take about 5 workers (32.71 / 6.34; 6 with the earlier ×4 measurement of 39.21 s) with the default configuration, or about 4 with the better one (23.92 / 6.34). Real shuffles over a network would increase these numbers.
-4. **What would justify a cluster.** (a) Data that no longer fit on one machine even with the streaming engine: the memory slope of default Polars on the laptop is about 0.21 GB per million rows of this 9-column slice, so a 16 GB machine would hold of the order of 70 million rows of the slice if the slope stayed linear (an extrapolation, not measured; the real panel has more columns). (b) Workloads that must run many jobs or serve many users concurrently, or must finish within a time limit that one machine cannot meet. (c) Data that already live in a distributed store, so moving them dominates the cost. Part 6 relates these thresholds to Vietnamese supervisory volumes.
+4. **What would justify a cluster.** (a) Data that no longer fit on one machine even with the streaming engine: the memory slope of default Polars on the laptop is about 0.21 GB per million rows of this 9-column slice, so a 16 GB machine would hold of the order of 70 million rows of the slice if the slope stayed linear (an extrapolation, not measured; the real panel has more columns). (b) Workloads that must run many jobs or serve many users concurrently, or must finish within a time limit that one machine cannot meet. (c) Data that already live in a distributed store, so moving them dominates the cost. Section 7.5 (point 5) draws the implication for Vietnam.
 
 **Limits of this benchmark.** Two transformations (T1 on a 9-column slice, T2 on a 2-column key table and a small event table); larger scales are replicated copies of the same panel, so key distributions do not change; Spark ran in local mode on 2 vCPUs with default settings plus two variations; the Colab machine is shared and noisy; Polars versions differ between environments; three or five repeats were used for the Spark runs.
 
@@ -495,7 +490,8 @@ Features are computed by `src/07_features.py` from the clean panel. The code lis
 | Group | Feature | Definition | Why it is informative |
 |:---|:---|:---|:---|
 | Capital | `eq_asset` | EQ / ASSET | Loss-absorbing buffer |
-| | `RBC1AAJ`, `RBCRWAJ` | Tier-1 and total risk-based capital ratios as reported | Regulatory capital adequacy |
+| | `RBC1AAJ` | Tier 1 leverage ratio (Core capital / Average assets) | Regulatory leverage adequacy |
+| | `RBCRWAJ` | Total risk-based capital ratio as reported | Regulatory capital adequacy |
 | Asset quality | `nclnls_loans` | NCLNLS / LNLSGR | Share of troubled loans |
 | | `lnatres_loans` | LNATRES / LNLSGR | Loss reserves relative to loans |
 | | `ore_asset` | ORE / ASSET | Foreclosed real estate |
@@ -512,7 +508,7 @@ Features are computed by `src/07_features.py` from the clean panel. The code lis
 | | `lnre_loans` | LNRE / LNLSGR | Real-estate concentration |
 | | `asset_growth_yoy`, `loan_growth_yoy` | X(q) / X(q − 12 months) − 1 for ASSET and LNLSGR | Rapid growth |
 
-Groups follow the CAMELS logic (capital, asset quality, earnings, liquidity); management quality and sensitivity to market risk are only proxied by the cost and size variables. Every ratio is null when its denominator is not positive. **Excluded:** `P3ASSET` (null before 2001, i.e. for most of the development period; P02) and `ELNATR` (kept out of this first version; a candidate for a sensitivity run). Output: `data_processed/features.parquet`, 1,681,547 rows, 23 features stored as float32, 121.3 MB.
+Groups follow the CAMELS framework, grounded in the empirical banking literature on Call Report early-warning indicators (e.g., Cole & White, 2012; Wheelock & Wilson, 2000; Altman, 1968). Management quality and sensitivity to market risk are proxied by cost, composition, and size variables. Every ratio is null when its denominator is not positive. **Excluded:** `P3ASSET` (null before 2001, i.e. for most of the development period; P02) and `ELNATR` (kept out of this first version; a candidate for a sensitivity run). Output: `data_processed/features.parquet`, 1,681,547 rows, 23 features stored as float32, 121.3 MB.
 
 ## 5.2 Point-in-time construction
 
@@ -681,18 +677,7 @@ the percentage cost reduction against never alerting (P is the number of positiv
 | M1_hist_gbm | P2_p_star | 34.67 | 53.48 |
 | M1_hist_gbm | P3_top_q_per_quarter | -248.35 | -40.17 |
 
-**Table 14: Saving (%) of the selected combination, logit with P2, against the oracle** (by fold and r)
-
-| r | Policy (B1_logit) | Fold 1 | Fold 2 | Fold 3 |
-|---:|:---|---:|---:|---:|
-| 10 | ORACLE_in_fold(ref) | 56.65 | 55.37 | 21.31 |
-| 10 | P2_p_star | 41.40 | 45.00 | 19.00 |
-| 20 | ORACLE_in_fold(ref) | 67.99 | 67.78 | 32.23 |
-| 20 | P2_p_star | 53.73 | 59.72 | 31.53 |
-| 50 | ORACLE_in_fold(ref) | 79.49 | 79.35 | 43.77 |
-| 50 | P2_p_star | 68.25 | 75.48 | 43.20 |
-| 100 | ORACLE_in_fold(ref) | 86.27 | 85.42 | 52.58 |
-| 100 | P2_p_star | 77.72 | 83.67 | 51.52 |
+*(Table 14, saving of the logistic regression with policy P2 against the oracle, by fold and r, is in Appendix F.)*
 
 Findings (all from out-of-fold development data):
 
@@ -771,22 +756,7 @@ The alarm rule of the frozen design is p ≥ 1/(1+r) for the logistic regression
 | M1 gradient boosting | 50 | p ≥ 1/(1+r) | 1.396 | 0.84 | 29.3 | 522 of 545 | 79.5 [77.1, 81.6] |
 | M1 gradient boosting | 100 | p ≥ 1/(1+r) | 1.876 | 0.87 | 22.7 | 526 of 545 | 84.0 [81.8, 86.0] |
 
-**Table 17: Paired differences between models (same bank resamples)**
-
-| Metric | r | Difference | Mean | 95% CI | Share of resamples > 0 |
-|:---|---:|:---|---:|:---|---:|
-| PR-AUC |  | B1_logit - B0_low_capital_rule | 0.3237 | [0.2842, 0.3624] | 1.000 |
-| ROC-AUC |  | B1_logit - B0_low_capital_rule | 0.0317 | [0.0264, 0.0374] | 1.000 |
-| saving | 10 | B1_logit - B0_low_capital_rule | 11.2222 | [8.5680, 13.8878] | 1.000 |
-| saving | 20 | B1_logit - B0_low_capital_rule | 12.6522 | [10.1451, 15.1278] | 1.000 |
-| saving | 50 | B1_logit - B0_low_capital_rule | 15.0985 | [12.8515, 17.2197] | 1.000 |
-| saving | 100 | B1_logit - B0_low_capital_rule | 13.8682 | [11.8188, 15.7766] | 1.000 |
-| PR-AUC |  | B1_logit - M1_hist_gbm | 0.0240 | [0.0045, 0.0458] | 0.992 |
-| ROC-AUC |  | B1_logit - M1_hist_gbm | -0.0007 | [-0.0054, 0.0032] | 0.377 |
-| saving | 10 | B1_logit - M1_hist_gbm | -9.1459 | [-11.1235, -7.2078] | 0.000 |
-| saving | 20 | B1_logit - M1_hist_gbm | -9.4524 | [-11.3211, -7.6752] | 0.000 |
-| saving | 50 | B1_logit - M1_hist_gbm | -5.5041 | [-6.8098, -4.1718] | 0.000 |
-| saving | 100 | B1_logit - M1_hist_gbm | -2.3929 | [-3.5081, -1.3438] | 0.000 |
+*(Table 17, paired differences between models on the test period, is in Appendix F.)*
 
 **Table 18: Pre-declared secondary evaluations (point estimates, no intervals)**
 
@@ -839,7 +809,7 @@ The two implementations agree closely on predictions and ranking. The largest co
 ## 6.12 Limitations of the evaluation and work not done
 
 * One test period, one frozen model and one policy: the intervals reflect the sampling of banks, not the choice of model, and secondary evaluations have none.
-* The probabilities are under-predicted on the test period (Table 19), so the policy p ≥ 1/(1+r) is conservative; recalibration (for example on the most recent development quarters) was not tried because the design was frozen, and a monitored recalibration would be needed in operation.
+* The probabilities are under-predicted on the test period (Table 19; mean predicted 0.192% vs empirical 0.490%), so the policy p ≥ 1/(1+r) operates conservatively (triggering fewer alarms with higher confidence). We intentionally refrained from empirically re-tuning p* on test data: doing so would violate the pre-registered protocol and constitute test-set snooping (leakage). In live supervisory deployment, adaptive probability calibration should be monitored prospectively.
 * The sensitivity analyses that require refitting (dropping `p9asset_asset` and `naasset_asset`; median `COST` for C_FN; costs counted per bank instead of per bank-quarter) were **not run**. The grid of r already covers the choice of the cost scale: using the median instead of the mean cost for a missed failure rescales r by a factor of 8,603/57,169 ≈ 0.15.
 * C_FP remains an assumption, publication delay is not modelled, and data vintages are not controlled (§6.8).
 * The reported savings are cost savings relative to never alerting, computed per bank-quarter with the costs of §6.6; they are not forecasts of losses to a deposit insurance fund.
@@ -890,7 +860,7 @@ These points follow from our results and are not claims about Vietnamese data, w
 2. **Reporting forms.** We found that seven income-statement items are cumulative within the year; the same test (`dq_ytd_evidence`) must be run first on the supervisory returns. Reports should be stored as filed, with their versions, which the API did not allow here.
 3. **Sample size.** The effective sample is the number of failed banks (2,290 in the development period here), not the number of rows (8,688 positive rows). If the number of resolution events in Vietnam is small, as the size of the system suggests (to be confirmed with the supervisor), a model like this cannot be trained on local failures alone; a transparent capital-based rule, which already reached a ROC-AUC of 0.95 here, a score from a model trained elsewhere after checking calibration on local data, or both, would be the starting point, with bank-cluster intervals attached to any result.
 4. **Calibration and thresholds.** Probabilities drifted by a factor of 2.6 between the development and the test periods; recalibration on recent quarters and a monitored threshold are needed in operation, and the cost ratio r must be set by the supervisor, since it cannot be estimated from the data.
-5. **Computing.** The Polars pipeline ran on an 8 GB laptop, and the processing steps that were measured peaked below 2 GB (T1 at four times the size: 1.76 GB); Spark demonstrations ran on Colab. The pipeline can run inside the supervisor's own secure environment without a cluster or a cloud service.
+5. **Computing.** The Polars pipeline ran on an 8 GB laptop, and the processing steps that were measured peaked below 2 GB (T1 at four times the size: 1.76 GB); Spark demonstrations ran on Colab. The pipeline can run inside the supervisor's own secure environment without a cluster or a cloud service. If the supervised population is of the order of tens or hundreds of institutions (to be confirmed with the supervisor), a Vietnamese bank-quarter panel would be a small fraction of the 1.68 million rows used here, far below the order of 70 million rows at which a 16 GB machine would be exceeded (§4.7).
 6. **Governance.** The controls used here (a frozen design with a commit and a model hash, a log that allows one test run, rules registered before the evaluation, asserted leakage checks) are transferable and cost little.
 
 ---
@@ -899,19 +869,25 @@ These points follow from our results and are not claims about Vietnamese data, w
 
 **Data and documentation**
 
-1. Federal Deposit Insurance Corporation. BankFind Suite API, https://api.fdic.gov/banks (financials, institutions and failures downloaded 2026-11-08/09, verified with SHA-256 manifest).
-2. FDIC field dictionary, https://api.fdic.gov/banks/docs/risview_properties.yaml (downloaded 2026-11-14; copy in `docs/fdic/`).
+* [D1] Federal Deposit Insurance Corporation. BankFind Suite API, https://api.fdic.gov/banks (financials, institutions and failures downloaded 2026-11-08/09, verified with SHA-256 manifest).
+* [D2] FDIC field dictionary, https://api.fdic.gov/banks/docs/risview_properties.yaml (downloaded 2026-11-14; copy in `docs/fdic/`).
 
-**Methods**
+**Literature on Bank Failure & Early Warning Systems**
 
-3. Elkan, C. (2001). The foundations of cost-sensitive learning. *Proceedings of the 17th International Joint Conference on Artificial Intelligence*.
-4. Davis, J. and Goadrich, M. (2006). The relationship between precision-recall and ROC curves. *Proceedings of the 23rd International Conference on Machine Learning*.
-5. Efron, B. (1979). Bootstrap methods: another look at the jackknife. *Annals of Statistics*, 7(1).
-6. López de Prado, M. (2018). *Advances in Financial Machine Learning*. Wiley (purging and embargo in time-ordered validation).
+* [L1] Altman, E. I. (1968). Financial ratios, discriminant analysis and the prediction of corporate bankruptcy. *The Journal of Finance*, 23(4), 589–609.
+* [L2] Cole, R. A., & White, L. J. (2012). Déjà vu all over again: The causes of U.S. commercial bank failures this decade. *Journal of Financial Services Research*, 42(1–2), 21–43.
+* [L3] Wheelock, D. C., & Wilson, P. W. (2000). Why do banks disappear? The determinants of U.S. commercial bank failures and acquisitions. *Review of Economics and Statistics*, 82(1), 127–138.
+
+**Statistical & Machine Learning Methods**
+
+* [M1] Elkan, C. (2001). The foundations of cost-sensitive learning. *Proceedings of the 17th International Joint Conference on Artificial Intelligence*.
+* [M2] Davis, J. and Goadrich, M. (2006). The relationship between precision-recall and ROC curves. *Proceedings of the 23rd International Conference on Machine Learning*.
+* [M3] Efron, B. (1979). Bootstrap methods: another look at the jackknife. *Annals of Statistics*, 7(1).
+* [M4] López de Prado, M. (2018). *Advances in Financial Machine Learning*. Wiley (purging and embargo in time-ordered validation).
 
 **Software**
 
-7. scikit-learn (Pedregosa et al., 2011, *JMLR* 12); Polars; pandas; PyArrow; PySpark. Exact versions are pinned in `requirements.txt`.
+* [S1] scikit-learn (Pedregosa et al., 2011, *JMLR* 12); Polars; pandas; PyArrow; PySpark. Exact versions are pinned in `requirements.txt`.
 
 **AI assistance (disclosure).** Claude (Anthropic) and Google Antigravity / Gemini were used to draft and review code, to discuss design choices and to draft report text. Every figure in this report comes from the output of scripts that the author executed on a local laptop (with Spark demonstrations and MLlib runs executed on Google Colab). Statements proposed during drafting that the data did not support were removed or corrected (for example an unverified explanation for the 22 unmatched failures, an audit count that merged assistance-only banks into failures, and the right-censoring of pre-merger rows). The author is responsible for all content.
 
@@ -1085,3 +1061,91 @@ These points follow from our results and are not claims about Vietnamese data, w
 | `asset_growth_yoy` | -0.3453 | -0.2944 | 2.171 | 0.05634 | 0.1003 | 0.2366 |
 | `loan_growth_yoy` | 0.1669 | -0.3699 | 4.062 | 0.07098 | 0.1283 | 0.3821 |
 | `(intercept)` | -7.8548 |  |  |  |  |  |
+
+# Appendix F: Supplementary Figures and Tables
+
+Supporting material for §2.3 (Figure A1), §3.1.1 (Figure A2), §3.1.2 (Figure A3), §6.6 (Table 14) and §6.10 (Table 17); the main text states the results that these items illustrate.
+
+![Storage Benchmark Comparison](figures/storage_benchmark.png)
+
+*Figure A1: Disk footprint (MB, left) and median write and read times (s, log scale, right) of the six storage layouts of Table 1.*
+
+![Bank Population Dynamics](figures/dq_banks_per_quarter.png)
+
+*Figure A2: Active commercial banks per quarter (left) and quarterly charter entries and exits, i.e. ceased reporting (right), 1984Q1 – 2026Q2.*
+
+![Missingness Heatmap](figures/dq_missing_heatmap.png)
+
+*Figure A3: Share of null values by indicator and year.*
+
+**Table 14: Saving (%) of the selected combination, logit with P2, against the oracle** (by fold and r)
+
+| r | Policy (B1_logit) | Fold 1 | Fold 2 | Fold 3 |
+|---:|:---|---:|---:|---:|
+| 10 | ORACLE_in_fold(ref) | 56.65 | 55.37 | 21.31 |
+| 10 | P2_p_star | 41.40 | 45.00 | 19.00 |
+| 20 | ORACLE_in_fold(ref) | 67.99 | 67.78 | 32.23 |
+| 20 | P2_p_star | 53.73 | 59.72 | 31.53 |
+| 50 | ORACLE_in_fold(ref) | 79.49 | 79.35 | 43.77 |
+| 50 | P2_p_star | 68.25 | 75.48 | 43.20 |
+| 100 | ORACLE_in_fold(ref) | 86.27 | 85.42 | 52.58 |
+| 100 | P2_p_star | 77.72 | 83.67 | 51.52 |
+
+**Table 17: Paired differences between models (same bank resamples)**
+
+| Metric | r | Difference | Mean | 95% CI | Share of resamples > 0 |
+|:---|---:|:---|---:|:---|---:|
+| PR-AUC |  | B1_logit - B0_low_capital_rule | 0.3237 | [0.2842, 0.3624] | 1.000 |
+| ROC-AUC |  | B1_logit - B0_low_capital_rule | 0.0317 | [0.0264, 0.0374] | 1.000 |
+| saving | 10 | B1_logit - B0_low_capital_rule | 11.2222 | [8.5680, 13.8878] | 1.000 |
+| saving | 20 | B1_logit - B0_low_capital_rule | 12.6522 | [10.1451, 15.1278] | 1.000 |
+| saving | 50 | B1_logit - B0_low_capital_rule | 15.0985 | [12.8515, 17.2197] | 1.000 |
+| saving | 100 | B1_logit - B0_low_capital_rule | 13.8682 | [11.8188, 15.7766] | 1.000 |
+| PR-AUC |  | B1_logit - M1_hist_gbm | 0.0240 | [0.0045, 0.0458] | 0.992 |
+| ROC-AUC |  | B1_logit - M1_hist_gbm | -0.0007 | [-0.0054, 0.0032] | 0.377 |
+| saving | 10 | B1_logit - M1_hist_gbm | -9.1459 | [-11.1235, -7.2078] | 0.000 |
+| saving | 20 | B1_logit - M1_hist_gbm | -9.4524 | [-11.3211, -7.6752] | 0.000 |
+| saving | 50 | B1_logit - M1_hist_gbm | -5.5041 | [-6.8098, -4.1718] | 0.000 |
+| saving | 100 | B1_logit - M1_hist_gbm | -2.3929 | [-3.5081, -1.3438] | 0.000 |
+
+<div class="page-break"></div>
+
+# Appendix G: Selection and Role of the 33 Downloaded Call Report Fields
+
+**Table G1** (column list from `config.py`; groups follow Table 8; descriptions paraphrase `docs/fdic/risview_properties.yaml`; management quality and market-risk sensitivity are only proxied, §5.1)
+
+| Field | Group | Description (FDIC dictionary, paraphrased) | Role in the pipeline |
+|:---|:---|:---|:---|
+| `CERT` | Key | Institution identifier (FDIC certificate number) | Join key of the three tables |
+| `REPDTE` | Key | Report date (quarter end) | Time index; all lags and growth rates use calendar dates |
+| `STNAME` | Other | State name | Not used as a feature; included in the missingness audit (Figure A3) |
+| `ASSET` | Size | Total assets, thousand USD | Denominator of ratios; log_asset; asset_growth_yoy |
+| `EQ` | Capital | Equity capital | eq_asset = EQ / ASSET |
+| `RBC1AAJ` | Capital | Tier 1 leverage ratio (Core capital to average assets), % | Feature as reported |
+| `RBCRWAJ` | Capital | Total risk-based capital ratio, % | Feature as reported |
+| `LNLSGR` | Size | Gross loans and leases | Denominator of loan ratios; loan_growth_yoy |
+| `LNLSNET` | Liquidity | Net loans and leases | lnlsnet_dep = LNLSNET / DEP |
+| `LNRE` | Mix | Loans secured by real estate | lnre_loans = LNRE / LNLSGR |
+| `LNCI` | Mix | Commercial and industrial loans | Not used as a feature; missingness audit only |
+| `LNCON` | Mix | Loans to individuals | Not used as a feature; missingness audit only |
+| `LNATRES` | Asset quality | Allowance for loan and lease losses | lnatres_loans = LNATRES / LNLSGR |
+| `NCLNLS` | Asset quality | Noncurrent loans and leases (P9ASSET + NAASSET, §5.1) | nclnls_loans = NCLNLS / LNLSGR |
+| `P3ASSET` | Asset quality | Loans and leases 30-89 days past due, still accruing | Excluded: null before 2001 (§3.1.2, P02) |
+| `P9ASSET` | Asset quality | Loans and leases 90 or more days past due, still accruing | p9asset_asset = P9ASSET / ASSET |
+| `NAASSET` | Asset quality | Loans and leases in nonaccrual status | naasset_asset = NAASSET / ASSET |
+| `NTLNLS` | Asset quality | Net charge-offs; year-to-date flow | De-cumulated; ntlnls_q_loans = NTLNLS_q / LNLSGR (least clean, P15) |
+| `ORE` | Asset quality | Other real estate owned | ore_asset = ORE / ASSET |
+| `NETINC` | Earnings | Net income; year-to-date flow | De-cumulated; netinc_q_asset |
+| `INTINC` | Earnings | Total interest income; year-to-date flow | De-cumulated; nim_q_asset = (INTINC_q - EINTEXP_q) / ASSET |
+| `EINTEXP` | Earnings | Total interest expense; year-to-date flow | De-cumulated; nim_q_asset |
+| `NONII` | Earnings | Noninterest income; year-to-date flow | De-cumulated (Stage 2) but not used as a feature in this version |
+| `NONIX` | Earnings | Noninterest expense; year-to-date flow | De-cumulated; nonix_q_asset = NONIX_q / ASSET |
+| `ELNATR` | Earnings | Provision for loan and lease losses; year-to-date flow | De-cumulated but kept out of the first version (candidate for a sensitivity run, §5.1) |
+| `ROA` | Earnings | Return on assets, % | Feature as reported |
+| `ROE` | Earnings | Return on equity, % | Feature as reported |
+| `NIMY` | Earnings | Net interest margin, % | Feature as reported |
+| `DEP` | Liquidity | Total deposits | Denominator of bro_dep and lnlsnet_dep |
+| `DEPDOM` | Liquidity | Domestic deposits | Not used as a feature; missingness audit only |
+| `BRO` | Liquidity | Brokered deposits | bro_dep = BRO / DEP |
+| `CHBAL` | Liquidity | Cash and balances due from depository institutions | chbal_asset = CHBAL / ASSET |
+| `SC` | Liquidity | Securities | sc_asset = SC / ASSET |

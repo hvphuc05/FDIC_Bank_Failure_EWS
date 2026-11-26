@@ -34,3 +34,9 @@ data_storage_benchmark/
 *.zip
 
 mllib_out/
+
+_local/
+AI_CONTEXT.md
+CONTEXT.md
+report/final_report.html
+*.zip
